@@ -16,6 +16,8 @@ The current research supports a bounded premise: multiple frames can contain gen
 
 The current working direction is therefore **evidence-gated temporal reconstruction** rather than unconditional temporal accumulation.
 
+See [`docs/STATUS.md`](docs/STATUS.md) for the canonical current decision state.
+
 ## Objective
 
 Recover as much **genuine source-supported spatial detail** as practical from low-resolution, blurry, compressed, noisy, or bandwidth-constrained video by exploiting useful information distributed across multiple frames.
@@ -70,6 +72,7 @@ These reports inform experiments and candidate mechanisms. They do **not** const
 ├── AGENTS.md
 └── docs/
     ├── README.md
+    ├── STATUS.md
     ├── decisions/
     │   └── README.md
     ├── evaluation/
@@ -79,7 +82,11 @@ These reports inform experiments and candidate mechanisms. They do **not** const
     │   └── PERFORMANCE_INHERITANCE.md
     └── research/
         ├── README.md
+        ├── CURRENT_SYNTHESIS.md
         └── foundation/
+            ├── 01-recoverable-information-limits.md
+            ├── 02-correspondence-visibility-uncertainty.md
+            └── 03-source-faithful-reconstruction-evaluation.md
 ```
 
 The structure will grow only when the work requires it. Implementation directories will be introduced after the first experimental architecture is justified.
