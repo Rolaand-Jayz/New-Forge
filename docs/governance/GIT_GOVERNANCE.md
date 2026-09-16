@@ -48,6 +48,22 @@ Use short, descriptive branches with a type prefix:
 
 One branch should represent one coherent purpose. Do not create long-lived catch-all branches.
 
+## Branch protection / repository rules
+
+The written workflow is the primary project rule, but platform enforcement should back it up when practical.
+
+Before active implementation or public release, configure GitHub branch protection/rulesets for `main` where available so accidental direct changes are harder to make. Recommended protections include:
+
+- require changes through pull requests;
+- block force pushes and branch deletion;
+- require conversation resolution when review comments exist;
+- require applicable CI/status checks once CI exists;
+- prevent bypass except for deliberate administrative recovery.
+
+Do not require status checks that do not yet exist merely to make the repository look mature. Add enforcement as the project gains the corresponding automation.
+
+Repository settings are consequential project state. Changes to protections/rulesets should be described to the user before they are applied.
+
 ## Commit conventions
 
 Use atomic commits with imperative Conventional-Commit-style subjects:
