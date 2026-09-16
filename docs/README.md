@@ -1,16 +1,19 @@
 # Documentation
 
-This repository separates **research evidence**, **project principles**, **evaluation rules**, **current status**, and **engineering decisions** so that one cannot silently become another.
+This repository separates **research evidence**, **project principles**, **evaluation rules**, **governance**, and **engineering decisions** so that one cannot silently become another.
 
 ## Authority map
 
 ### `STATUS.md`
-Canonical short-form snapshot of what is established, unresolved, prohibited, and allowed next.
+Canonical snapshot of the current project phase, established constraints, unresolved decisions, and next allowed work.
+
+### `governance/`
+Durable operating rules for Git/GitHub, documentation and traceability, prompt construction, and instruction maintenance. It also contains the compact ChatGPT project-folder instruction router.
 
 ### `research/`
-Deep-research artifacts and project syntheses.
+Research artifacts, condensed research context, and project syntheses.
 
-Research informs decisions but does not automatically define architecture.
+Research informs decisions but does not automatically define architecture. Routine work should start with `research/NEW_FORGE_RESEARCH_BASELINE.md`; consult the full foundation reports only when deeper evidence is needed.
 
 ### `principles/`
 Rules that constrain how architecture is selected and what may be inherited from prior work.
@@ -28,9 +31,15 @@ The project is still in **decision making**. Implementation directories should n
 ## Key documents
 
 - [`STATUS.md`](STATUS.md)
+- [`governance/README.md`](governance/README.md)
+- [`governance/GIT_GOVERNANCE.md`](governance/GIT_GOVERNANCE.md)
+- [`governance/DOCUMENTATION_AND_TRACEABILITY.md`](governance/DOCUMENTATION_AND_TRACEABILITY.md)
+- [`governance/PROMPTING_STANDARD.md`](governance/PROMPTING_STANDARD.md)
+- [`governance/INSTRUCTION_MAINTENANCE.md`](governance/INSTRUCTION_MAINTENANCE.md)
+- [`governance/PROJECT_FOLDER_INSTRUCTIONS.md`](governance/PROJECT_FOLDER_INSTRUCTIONS.md)
 - [`principles/ARCHITECTURE_NEUTRALITY.md`](principles/ARCHITECTURE_NEUTRALITY.md)
 - [`principles/PERFORMANCE_INHERITANCE.md`](principles/PERFORMANCE_INHERITANCE.md)
 - [`evaluation/EVIDENCE_STANDARD.md`](evaluation/EVIDENCE_STANDARD.md)
+- [`research/NEW_FORGE_RESEARCH_BASELINE.md`](research/NEW_FORGE_RESEARCH_BASELINE.md)
 - [`research/README.md`](research/README.md)
-- [`research/CURRENT_SYNTHESIS.md`](research/CURRENT_SYNTHESIS.md)
 - [`decisions/README.md`](decisions/README.md)

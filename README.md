@@ -12,11 +12,11 @@ The project begins from the reconstruction problem itself rather than from an ex
 
 No production reconstruction architecture has been selected. The repository is intentionally being structured before implementation so that experiments, evidence, decisions, and later performance work remain traceable.
 
+See [`docs/STATUS.md`](docs/STATUS.md) for the canonical current decision state.
+
 The current research supports a bounded premise: multiple frames can contain genuinely recoverable spatial information when they provide useful independent observations, but the gain is conditional on sampling diversity, blur, motion, visibility, alignment, compression, noise, and reconstruction method.
 
 The current working direction is therefore **evidence-gated temporal reconstruction** rather than unconditional temporal accumulation.
-
-See [`docs/STATUS.md`](docs/STATUS.md) for the canonical current decision state.
 
 ## Objective
 
@@ -41,13 +41,13 @@ Early experiments are quality-first and are not required to run in real time.
 
 ## Research before architecture
 
-The repository starts with a foundation research record and targeted follow-up studies covering:
+The repository starts with foundation and targeted research covering:
 
 1. recoverable information limits in real video;
 2. correspondence, visibility, and uncertainty;
 3. source-faithful reconstruction and evaluation.
 
-See [`docs/research/`](docs/research/README.md).
+Routine project work should begin with [`docs/research/NEW_FORGE_RESEARCH_BASELINE.md`](docs/research/NEW_FORGE_RESEARCH_BASELINE.md). The detailed research artifacts remain under [`docs/research/foundation/`](docs/research/foundation/).
 
 These reports inform experiments and candidate mechanisms. They do **not** constitute an implementation specification.
 
@@ -62,6 +62,7 @@ These reports inform experiments and candidate mechanisms. They do **not** const
 7. **Negative results are retained.** A falsified idea is useful project evidence.
 8. **Human visual review may reopen a metric-green result.**
 9. **Performance knowledge may be inherited; reconstruction assumptions may not.** See [`PERFORMANCE_INHERITANCE.md`](docs/principles/PERFORMANCE_INHERITANCE.md).
+10. **Substantive changes are reviewable and traceable.** Git, documentation, and prompt governance live under [`docs/governance/`](docs/governance/README.md).
 
 ## Repository map
 
@@ -73,6 +74,13 @@ These reports inform experiments and candidate mechanisms. They do **not** const
 └── docs/
     ├── README.md
     ├── STATUS.md
+    ├── governance/
+    │   ├── README.md
+    │   ├── GIT_GOVERNANCE.md
+    │   ├── DOCUMENTATION_AND_TRACEABILITY.md
+    │   ├── PROMPTING_STANDARD.md
+    │   ├── INSTRUCTION_MAINTENANCE.md
+    │   └── PROJECT_FOLDER_INSTRUCTIONS.md
     ├── decisions/
     │   └── README.md
     ├── evaluation/
@@ -82,14 +90,18 @@ These reports inform experiments and candidate mechanisms. They do **not** const
     │   └── PERFORMANCE_INHERITANCE.md
     └── research/
         ├── README.md
+        ├── NEW_FORGE_RESEARCH_BASELINE.md
         ├── CURRENT_SYNTHESIS.md
         └── foundation/
-            ├── 01-recoverable-information-limits.md
-            ├── 02-correspondence-visibility-uncertainty.md
-            └── 03-source-faithful-reconstruction-evaluation.md
 ```
 
 The structure will grow only when the work requires it. Implementation directories will be introduced after the first experimental architecture is justified.
+
+## Repository discipline
+
+The repository is intended to remain understandable to a future reader who has no access to project chats. Decisions, experiments, commits, and documentation should make the reasoning traceable without relying on private context.
+
+Governance is intentionally lightweight but explicit. See [`docs/governance/README.md`](docs/governance/README.md).
 
 ## Relationship to earlier work
 
