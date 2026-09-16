@@ -68,6 +68,8 @@ These reports inform experiments and candidate mechanisms. They do **not** const
 
 ```text
 .
+├── .github/
+│   └── PULL_REQUEST_TEMPLATE.md
 ├── README.md
 ├── LICENSE
 ├── AGENTS.md
