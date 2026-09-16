@@ -1,8 +1,11 @@
 # Documentation
 
-This repository separates **research evidence**, **project principles**, **evaluation rules**, and **engineering decisions** so that one cannot silently become another.
+This repository separates **research evidence**, **project principles**, **evaluation rules**, **current status**, and **engineering decisions** so that one cannot silently become another.
 
 ## Authority map
+
+### `STATUS.md`
+Canonical short-form snapshot of what is established, unresolved, prohibited, and allowed next.
 
 ### `research/`
 Deep-research artifacts and project syntheses.
@@ -24,6 +27,7 @@ The project is still in **decision making**. Implementation directories should n
 
 ## Key documents
 
+- [`STATUS.md`](STATUS.md)
 - [`principles/ARCHITECTURE_NEUTRALITY.md`](principles/ARCHITECTURE_NEUTRALITY.md)
 - [`principles/PERFORMANCE_INHERITANCE.md`](principles/PERFORMANCE_INHERITANCE.md)
 - [`evaluation/EVIDENCE_STANDARD.md`](evaluation/EVIDENCE_STANDARD.md)
