@@ -1,0 +1,37 @@
+name: Experiment proposal
+description: Propose an experiment. Record the falsifier before running it.
+title: "[experiment] "
+labels: ["experiment"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Open question
+      description: Which unresolved decision in docs/STATUS.md does this address?
+    validations:
+      required: true
+  - type: textarea
+    id: hypothesis
+    attributes:
+      label: Hypothesis
+    validations:
+      required: true
+  - type: textarea
+    id: variable
+    attributes:
+      label: Controlled variable and baselines
+      description: The one major unknown being changed, and what it is compared against.
+    validations:
+      required: true
+  - type: textarea
+    id: falsifier
+    attributes:
+      label: Falsifier
+      description: The result that would count against the hypothesis, stated before any run.
+    validations:
+      required: true
+  - type: textarea
+    id: metrics
+    attributes:
+      label: Metrics
+      description: Quality, temporal, and source-faithfulness checks; human review if relevant.
