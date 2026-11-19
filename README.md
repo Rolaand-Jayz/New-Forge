@@ -72,6 +72,11 @@ These reports inform experiments and candidate mechanisms. They do **not** const
 ├── README.md
 ├── LICENSE
 ├── AGENTS.md
+├── CHANGELOG.md
+├── CITATION.cff
+├── CODE_OF_CONDUCT.md
+├── CONTRIBUTING.md
+├── .github/            (issue and pull request templates)
 └── docs/
     ├── README.md
     ├── STATUS.md
@@ -100,6 +105,14 @@ The structure will grow only when the work requires it. Implementation directori
 This project follows an earlier FSR-centered Temporal Forge research phase, but it does **not** inherit that project's reconstruction model or FSR-specific semantic assumptions.
 
 Engineering lessons from that work—especially high-throughput native GPU video processing—remain valuable and may be reused when independently appropriate. Architectural assumptions do not transfer merely because they existed before.
+
+## Contributing
+
+Evidence, counter-examples, and corrections are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the rules contributions are reviewed against, and [`CHANGELOG.md`](CHANGELOG.md) for what has changed.
+
+## Citing
+
+Citation metadata is in [`CITATION.cff`](CITATION.cff); GitHub's "Cite this repository" button uses it.
 
 ## License
 

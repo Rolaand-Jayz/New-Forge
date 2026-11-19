@@ -1,0 +1,50 @@
+name: Evidence report
+description: Report a measurement, reproduction, or counter-example.
+title: "[evidence] "
+labels: ["evidence"]
+body:
+  - type: textarea
+    id: claim
+    attributes:
+      label: Claim tested
+      description: The specific claim this evidence supports, weakens, or contradicts.
+    validations:
+      required: true
+  - type: dropdown
+    id: label
+    attributes:
+      label: Evidence label
+      options:
+        - Measured fact
+        - Documented result
+        - Observation
+        - Engineering inference
+        - Hypothesis
+        - Speculation
+        - Unresolved
+    validations:
+      required: true
+  - type: textarea
+    id: setup
+    attributes:
+      label: Setup
+      description: Code or binary identity, inputs and ground truth, configuration, hardware and driver.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Result
+      description: Metrics, baselines, and controls. Link artifacts or logs where possible.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Competing explanations
+      description: What else could explain this result, and what was done to rule it out.
+  - type: textarea
+    id: media
+    attributes:
+      label: Test media and licenses
+      description: Name the source media and its license.
