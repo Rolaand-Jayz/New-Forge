@@ -1,8 +1,28 @@
 # Project Status
 
-**Date:** 2026-09-16  
-**Phase:** Research synthesis and architecture decision-making  
+**Date:** 2026-11-19 (research snapshot below: 2026-09-16)  
+**Phase:** Research synthesis and architecture decision-making; first implementation evidence recorded  
 **Implementation status:** No production architecture selected
+
+## Update 2026-11-19: first implementation evidence
+
+Implementation work since the September snapshot has run in ANVIL, a private Linux/Vulkan video player. Its reconstruction stage, FORGE, combines a lanczos3 base, a small correction network, and an evidence-gated temporal path.
+
+On scenes held out from tuning, FORGE passes its pre-recorded quality gate. Measured gains over lanczos3:
+
+- **+0.585 dB** on clean input;
+- **+0.414 dB** on CRF 23 input;
+- **+4.858 dB** on noisy input (largely denoising, not recovered detail).
+
+Open items:
+
+- The temporal-stability gate fails on noisy input.
+- Real 4K60 playback is not yet measured. The whole stage runs at 9.77 ms per 4K frame on an RX 7900 GRE.
+- The choice of CRF 23 measurement clips is unresolved.
+
+Full record, evidence chain, and limits: [`results/2026-11-17-forge-protected-scene-confirm.md`](results/2026-11-17-forge-protected-scene-confirm.md).
+
+This is evidence, not an architecture decision. The sections below remain the 2026-09-16 research snapshot.
 
 ## Purpose
 

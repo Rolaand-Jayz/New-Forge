@@ -16,6 +16,8 @@ The current research supports a bounded premise: multiple frames can contain gen
 
 The current working direction is therefore **evidence-gated temporal reconstruction** rather than unconditional temporal accumulation.
 
+**First implementation evidence (2026-11-17).** FORGE, the reconstruction stage of a private implementation, passes its pre-recorded quality gate on held-out scenes. It measures +0.585 dB on clean input and +0.414 dB on CRF 23 input over lanczos3. Its temporal-stability gate still fails on noisy input, and real 4K60 playback is not yet measured. See [the results record](docs/results/2026-11-17-forge-protected-scene-confirm.md).
+
 See [`docs/STATUS.md`](docs/STATUS.md) for the canonical current decision state.
 
 ## Objective
@@ -80,6 +82,8 @@ These reports inform experiments and candidate mechanisms. They do **not** const
     ├── principles/
     │   ├── ARCHITECTURE_NEUTRALITY.md
     │   └── PERFORMANCE_INHERITANCE.md
+    ├── results/
+    │   └── 2026-11-17-forge-protected-scene-confirm.md
     └── research/
         ├── README.md
         ├── CURRENT_SYNTHESIS.md

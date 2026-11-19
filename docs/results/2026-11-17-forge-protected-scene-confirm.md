@@ -1,0 +1,71 @@
+# FORGE protected-scene confirmation (2026-11-17)
+
+**Disposition: SUPPORTED WITH QUALIFICATION.** The pre-recorded quality gate passes on scenes held out from tuning. The temporal-stability gate fails on noisy input. Real 4K60 playback has not been measured.
+
+## Context
+
+Since the 2026-09-16 status snapshot, implementation work has run in **ANVIL**, a private Linux/Vulkan video player. **FORGE** is the reconstruction stage built there:
+
+- a lanczos3 base plus a small convolutional correction network (`output = lanczos3(LR) + delta(LR)`);
+- an evidence-gated temporal path: noise-gated history fusion, noise-gated back-projection, and output-resolution accumulation that contributes only sub-pixel phases the current frame cannot see.
+
+The ANVIL code is private. This record publishes the measurements and their limits, not the code. It is evidence for this repository's open questions; it does not declare New Forge's production architecture.
+
+## Evidence chain (per `evaluation/EVIDENCE_STANDARD.md`)
+
+1. **Claim tested.** FORGE as built improves fidelity over lanczos3 alone on held-out scenes without regressing clean content. This is the F-QUALITY gate, recorded on 2026-11-07, before any tuning:
+   - killed if the mean gain on CRF 23 + noisy cells is below **+0.05 dB**;
+   - killed if clean cells regress by more than 0.05 dB;
+   - "mic-drop" tier: at least **+0.3 dB** on CRF 23 + noisy with clean intact.
+2. **Code identity.** ANVIL commits `8f3b6cf` (2026-11-16) and `41ba911` (2026-11-17). Default weights `merged-v2`, **hand-constructed by a script, not trained**. No AMD weights, shaders, or outputs were used as initialization, teacher, or data.
+3. **Inputs and reference.**
+   - Scenes: `sintel_rooftop`, `tos_daylight`, `tos_debris`; frames 72, 120, 168. These scenes are protected: not used in tuning.
+   - 1280×720 input, 3840×2160 output (3×). Ground truth: the 2160p lossless master.
+   - Arms: clean (CRF 10), CRF 23, and noisy twins.
+4. **Controlled variable.** The FORGE stage versus lanczos3 alone on the same frames. Lanczos3 is also the output of the zero-initialized model, so it is the floor by construction.
+5. **Baselines.** Lanczos3 alone; the spatial-only FORGE model; the 2026-11-15 player.
+6. **Configuration.** Front end, temporal path, back-projection, and 4K accumulation all on; 19-frame warm-up. Measured on a replica of the player that is parity-checked against GPU captures (see item 10).
+7. **Artifacts and logs.** Held in the private repository (`gate_confirm.json`, `spatial_protected.json`, per-scene logs).
+8. **Quality metrics** (measured fact; dB over lanczos3, PSNR against ground truth):
+
+   | Arm | Spatial model | 2026-11-15 player | **2026-11-17 player** |
+   |---|---|---|---|
+   | Clean | +0.053 | +0.054 | **+0.585** |
+   | CRF 23, corpus clips | +0.033 | +0.034 | −0.030 |
+   | CRF 23, aligned clips | +0.038 | +0.038 | **+0.414** |
+   | Noisy | +1.507 | +4.096 | **+4.858** |
+
+   - `tos_daylight` at CRF 27 (made from the master): +0.182.
+   - The gate passes on either CRF 23 clip set. The mic-drop tier is met only with the aligned clips.
+9. **Temporal metric** (measured fact; M2 edge flicker on frame pairs N/N+1):
+   - below lanczos3 on clean, both CRF 23 sets, and CRF 27: **pass**;
+   - above lanczos3 on the noisy twins (0.0792 vs 0.0643): **fail**. Every FORGE version fails here, including the spatial model, so the failure predates the temporal work.
+10. **Competing explanations.**
+    - **Ruler defect (measured fact).** The corpus CRF 23 clips sit 1.3–1.7 px vertically off the ground-truth master. They were cut from the released film, not the master. That penalizes any output that moves toward the truth. Clips re-cut from the master align within 0.03 px. Which ruler the gate uses going forward is an **unresolved** decision.
+    - **Noisy-arm gain is largely denoising (engineering inference).** On noise, the 720p history is used on 98–99.5% of pixels. On clean and compressed content it is mostly rejected (2–22% of pixels, low weight), while the 4K history is kept on 89–98% of pixels. The noisy numbers therefore should not be read as recovered detail.
+    - **Replica versus GPU (measured fact).** GPU/replica parity passes on clean cells (max 2 codes, mean 0.0145) and fails on the noisy cell (max 6 codes). The noisy-arm figures carry that gap.
+11. **Excluded or invalid evidence.**
+    - The shifted corpus CRF 23 ruler is retained and flagged, not deleted.
+    - Negative result retained: an earlier fine-tune of AMD's FSR 4 network for compressed video was **killed** by its own pre-recorded gate (−0.005 dB against a required +0.05 dB). FORGE replaced it.
+12. **Disposition.** SUPPORTED WITH QUALIFICATION.
+
+## Performance (reported separately from quality)
+
+- 1280×720 → 3840×2160, whole FORGE stage, GPU timestamps; AMD RX 7900 GRE, RADV (Mesa).
+- All on: **9.77 ms median** (p90 9.84 ms). Accumulation off: 6.57 ms.
+- Measured at the GPU's mid-clock state, the state headless test playback holds it in.
+- Limit: ≤ 10 ms for the whole stage. This was amended on 2026-11-15, before these measurements, from an arbitrary 5 ms. The governing criterion is 4K playback at 60 fps (frame time under 16.6 ms).
+- Real-playback frame-to-frame time at 4K60 has **not** been measured.
+
+## What this record does not establish
+
+- New Forge's production architecture. No decision record has been written for FORGE.
+- How much of the gain is recovered information versus inference. No reprojection residuals or frequency analysis are reported here.
+- Generalization beyond three protected scenes and nine frames.
+
+## Credits
+
+Test scenes are from the Blender Foundation's open movies, used under CC BY 3.0:
+
+- *Sintel* © copyright Blender Foundation | durian.blender.org
+- *Tears of Steel* © copyright Blender Foundation | mango.blender.org
