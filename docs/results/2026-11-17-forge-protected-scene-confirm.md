@@ -57,6 +57,26 @@ The ANVIL code is private. This record publishes the measurements and their limi
 - Limit: ≤ 10 ms for the whole stage. This was amended on 2026-11-15, before these measurements, from an arbitrary 5 ms. The governing criterion is 4K playback at 60 fps (frame time under 16.6 ms).
 - Real-playback frame-to-frame time at 4K60 has **not** been measured.
 
+## Independent re-run (2026-11-19)
+
+**Measured fact.** The same replica and default weights were re-run from a separate script on the same protected cells: 9 clean, 9 aligned-CRF 23, and 6 noisy frames. The re-run used the CPU, because a ROCm 10.1 update made host-to-GPU copies crash intermittently.
+
+Whole-frame means over lanczos3 match the table above exactly: **+0.585 dB** (clean), **+0.414 dB** (aligned CRF 23), **+4.858 dB** (noisy).
+
+**Tile-level ranking** (96×96 tiles at 4K, mean squared error against ground truth):
+
+- **Largest gain on clean or compressed input:** +1.70 dB in one tile (`sintel_rooftop` f120, clean).
+- **Largest gain on a lit, textured noisy tile:** stone texture buried in noise is recovered, close to ground truth.
+
+  ![noisy input vs FORGE vs ground truth](figures/2026-11-19-noisy-rooftop-f168-gain.jpg)
+- **Worst tile: −5.75 dB** (`sintel_rooftop` f168 noisy, frame edge).
+
+  ![worst tile](figures/2026-11-19-noisy-rooftop-f168-worst-tile.jpg)
+
+**Observation, not root-caused.** In the worst tile, FORGE places a moving object where it was earlier rather than where it is now. This looks like stale temporal history (ghosting). A fainter dark smear is visible beside the post in the gain figure as well.
+
+**Hypothesis.** History fusion on noisy input (used on 98–99.5% of pixels, see item 10) is not rejecting regions with motion or disocclusion. This should be tested against the noisy-arm F-TEMPORAL failure.
+
 ## What this record does not establish
 
 - New Forge's production architecture. No decision record has been written for FORGE.
