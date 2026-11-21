@@ -1,0 +1,28 @@
+clean  sintel_rooftop  f72  spatial +0.065 M2 0.0547
+clean  sintel_rooftop  f120 spatial +0.076 M2 0.0570
+clean  sintel_rooftop  f168 spatial +0.107 M2 0.1132
+clean  tos_daylight    f72  spatial +0.011 M2 0.0271
+clean  tos_daylight    f120 spatial +0.006 M2 0.0570
+clean  tos_daylight    f168 spatial +0.013 M2 0.0595
+clean  tos_debris      f72  spatial +0.006 M2 0.1333
+clean  tos_debris      f120 spatial +0.004 M2 0.1006
+clean  tos_debris      f168 spatial +0.186 M2 0.0233
+crf23  sintel_rooftop  f72  spatial +0.048 M2 0.0534
+crf23  sintel_rooftop  f120 spatial +0.049 M2 0.0550
+crf23  sintel_rooftop  f168 spatial +0.046 M2 0.1129
+crf23  tos_daylight    f72  spatial +0.024 M2 0.0268
+crf23  tos_daylight    f120 spatial +0.018 M2 0.0574
+crf23  tos_daylight    f168 spatial +0.020 M2 0.0594
+crf23  tos_debris      f72  spatial +0.011 M2 0.1343
+crf23  tos_debris      f120 spatial +0.011 M2 0.1006
+crf23  tos_debris      f168 spatial +0.074 M2 0.0220
+noisy  sintel_rooftop  f72  spatial +1.067 M2 0.0609
+noisy  sintel_rooftop  f120 spatial +1.058 M2 0.0627
+noisy  sintel_rooftop  f168 spatial +1.626 M2 0.1094
+noisy  tos_debris      f72  spatial +2.189 M2 0.1126
+noisy  tos_debris      f120 spatial +1.976 M2 0.0842
+noisy  tos_debris      f168 spatial +1.128 M2 0.0321
+spatial clean: +0.0525  M2 0.0695
+spatial crf23: +0.0334  M2 0.0691
+spatial noisy: +1.5074  M2 0.0770
+spatial M2 mean 0.0712

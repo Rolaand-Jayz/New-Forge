@@ -1,0 +1,55 @@
+clean  sintel_rooftop  f72   LR fusion: used  10.5%  w 0.028  clamped  67.2%  | 4K: kept  92.8%  c 0.888  new-phase  23.1%  bp 0.230
+clean  sintel_rooftop  f120  LR fusion: used   9.0%  w 0.024  clamped  69.1%  | 4K: kept  93.4%  c 0.895  new-phase  20.1%  bp 0.201
+clean  sintel_rooftop  f168  LR fusion: used  28.8%  w 0.023  clamped  83.3%  | 4K: kept  72.4%  c 0.695  new-phase  64.9%  bp 0.643
+clean  tos_daylight    f72   LR fusion: used  12.0%  w 0.024  clamped  69.9%  | 4K: kept  95.1%  c 0.910  new-phase  26.5%  bp 0.264
+clean  tos_daylight    f120  LR fusion: used  13.9%  w 0.027  clamped  71.7%  | 4K: kept  90.5%  c 0.867  new-phase  34.9%  bp 0.347
+clean  tos_daylight    f168  LR fusion: used  11.3%  w 0.027  clamped  72.5%  | 4K: kept  93.9%  c 0.893  new-phase  30.6%  bp 0.305
+clean  tos_debris      f72   LR fusion: used  23.5%  w 0.021  clamped  76.1%  | 4K: kept  88.9%  c 0.850  new-phase  41.3%  bp 0.410
+clean  tos_debris      f120  LR fusion: used  19.9%  w 0.025  clamped  79.1%  | 4K: kept  85.2%  c 0.815  new-phase  47.3%  bp 0.470
+clean  tos_debris      f168  LR fusion: used  21.1%  w 0.030  clamped  76.8%  | 4K: kept  85.4%  c 0.817  new-phase  48.2%  bp 0.477
+crf23  sintel_rooftop  f72   LR fusion: used   3.5%  w 0.019  clamped  75.2%  | 4K: kept  93.0%  c 0.896  new-phase  23.9%  bp 0.239
+crf23  sintel_rooftop  f120  LR fusion: used   2.6%  w 0.020  clamped  73.5%  | 4K: kept  93.6%  c 0.904  new-phase  21.4%  bp 0.214
+crf23  sintel_rooftop  f168  LR fusion: used  16.1%  w 0.012  clamped  91.1%  | 4K: kept  72.1%  c 0.693  new-phase  66.2%  bp 0.661
+crf23  tos_daylight    f72   LR fusion: used   2.6%  w 0.019  clamped  70.0%  | 4K: kept  95.8%  c 0.931  new-phase  24.2%  bp 0.242
+crf23  tos_daylight    f120  LR fusion: used   4.7%  w 0.019  clamped  73.7%  | 4K: kept  90.9%  c 0.883  new-phase  33.0%  bp 0.329
+crf23  tos_daylight    f168  LR fusion: used   2.5%  w 0.018  clamped  75.7%  | 4K: kept  94.0%  c 0.909  new-phase  30.0%  bp 0.300
+crf23  tos_debris      f72   LR fusion: used  10.9%  w 0.012  clamped  83.8%  | 4K: kept  88.3%  c 0.850  new-phase  42.4%  bp 0.424
+crf23  tos_debris      f120  LR fusion: used  10.2%  w 0.015  clamped  86.3%  | 4K: kept  84.5%  c 0.813  new-phase  48.7%  bp 0.486
+crf23  tos_debris      f168  LR fusion: used  11.3%  w 0.022  clamped  76.9%  | 4K: kept  85.8%  c 0.830  new-phase  47.0%  bp 0.468
+noisy  sintel_rooftop  f72   LR fusion: used  94.9%  w 0.583  clamped  16.0%  | 4K: kept  90.1%  c 0.855  new-phase  23.8%  bp 0.170
+noisy  sintel_rooftop  f120  LR fusion: used  94.9%  w 0.575  clamped  17.1%  | 4K: kept  89.5%  c 0.850  new-phase  24.2%  bp 0.178
+noisy  sintel_rooftop  f168  LR fusion: used  99.9%  w 0.707  clamped   6.6%  | 4K: kept  96.2%  c 0.911  new-phase  11.3%  bp 0.035
+noisy  tos_debris      f72   LR fusion: used  99.3%  w 0.680  clamped   7.0%  | 4K: kept  95.9%  c 0.913  new-phase  11.9%  bp 0.065
+noisy  tos_debris      f120  LR fusion: used  99.7%  w 0.669  clamped   8.0%  | 4K: kept  96.1%  c 0.911  new-phase  13.7%  bp 0.067
+noisy  tos_debris      f168  LR fusion: used  99.9%  w 0.682  clamped   8.0%  | 4K: kept  93.4%  c 0.887  new-phase  17.3%  bp 0.059
+clean  sintel_cave     f72   LR fusion: used  21.6%  w 0.045  clamped  60.6%  | 4K: kept  94.6%  c 0.909  new-phase  27.4%  bp 0.269
+clean  sintel_cave     f120  LR fusion: used  23.3%  w 0.029  clamped  71.4%  | 4K: kept  83.1%  c 0.803  new-phase  47.8%  bp 0.473
+clean  sintel_cave     f168  LR fusion: used  20.1%  w 0.047  clamped  64.2%  | 4K: kept  96.7%  c 0.919  new-phase  27.4%  bp 0.270
+crf23  sintel_cave     f72   LR fusion: used  17.4%  w 0.035  clamped  65.5%  | 4K: kept  92.1%  c 0.887  new-phase  35.7%  bp 0.353
+crf23  sintel_cave     f120  LR fusion: used  17.6%  w 0.021  clamped  77.0%  | 4K: kept  82.1%  c 0.798  new-phase  51.3%  bp 0.510
+crf23  sintel_cave     f168  LR fusion: used  12.8%  w 0.030  clamped  70.1%  | 4K: kept  95.5%  c 0.918  new-phase  34.2%  bp 0.339
+crf27  sintel_cave     f72   LR fusion: used  17.0%  w 0.036  clamped  65.0%  | 4K: kept  92.3%  c 0.891  new-phase  35.5%  bp 0.352
+crf27  sintel_cave     f120  LR fusion: used  17.4%  w 0.020  clamped  76.6%  | 4K: kept  82.5%  c 0.804  new-phase  51.8%  bp 0.515
+crf27  sintel_cave     f168  LR fusion: used  12.9%  w 0.030  clamped  67.5%  | 4K: kept  94.8%  c 0.912  new-phase  34.9%  bp 0.347
+noisy  sintel_cave     f72   LR fusion: used  99.1%  w 0.703  clamped   4.8%  | 4K: kept  97.1%  c 0.923  new-phase   7.6%  bp 0.047
+noisy  sintel_cave     f120  LR fusion: used  99.9%  w 0.725  clamped   3.0%  | 4K: kept  97.8%  c 0.930  new-phase   4.9%  bp 0.022
+noisy  sintel_cave     f168  LR fusion: used  99.6%  w 0.713  clamped   3.0%  | 4K: kept  98.6%  c 0.941  new-phase   5.7%  bp 0.028
+crf27  tos_daylight    f72   LR fusion: used   1.8%  w 0.023  clamped  66.6%  | 4K: kept  95.9%  c 0.933  new-phase  23.7%  bp 0.237
+crf27  tos_daylight    f120  LR fusion: used   3.5%  w 0.016  clamped  74.8%  | 4K: kept  90.6%  c 0.882  new-phase  33.4%  bp 0.334
+crf27  tos_daylight    f168  LR fusion: used   2.2%  w 0.018  clamped  77.3%  | 4K: kept  93.8%  c 0.908  new-phase  30.3%  bp 0.303
+noisy  tos_daylight    f72   LR fusion: used  97.6%  w 0.598  clamped  14.6%  | 4K: kept  92.6%  c 0.879  new-phase  20.8%  bp 0.149
+noisy  tos_daylight    f120  LR fusion: used  98.4%  w 0.619  clamped  12.9%  | 4K: kept  93.1%  c 0.884  new-phase  19.4%  bp 0.125
+noisy  tos_daylight    f168  LR fusion: used  97.7%  w 0.603  clamped  14.4%  | 4K: kept  92.9%  c 0.881  new-phase  20.3%  bp 0.141
+
+protected clean  LR fusion used  16.7% (w 0.025, clamped 74.0%) | 4K history kept  88.6% (c 0.848), new-phase  37.4%
+protected crf23  LR fusion used   7.2% (w 0.017, clamped 78.5%) | 4K history kept  88.7% (c 0.857), new-phase  37.4%
+protected crf27  LR fusion used   2.5% (w 0.019, clamped 72.9%) | 4K history kept  93.4% (c 0.908), new-phase  29.1%
+protected noisy  LR fusion used  98.0% (w 0.635, clamped 11.6%) | 4K history kept  93.3% (c 0.886), new-phase  18.1%
+cave      clean  LR fusion used  21.7% (w 0.040, clamped 65.4%) | 4K history kept  91.5% (c 0.877), new-phase  34.2%
+cave      crf23  LR fusion used  16.0% (w 0.028, clamped 70.8%) | 4K history kept  89.9% (c 0.868), new-phase  40.4%
+cave      crf27  LR fusion used  15.7% (w 0.029, clamped 69.7%) | 4K history kept  89.9% (c 0.869), new-phase  40.8%
+cave      noisy  LR fusion used  99.5% (w 0.714, clamped  3.6%) | 4K history kept  97.8% (c 0.931), new-phase   6.1%
+tos_dayl. clean  LR fusion used  12.4% (w 0.026, clamped 71.4%) | 4K history kept  93.2% (c 0.890), new-phase  30.7%
+tos_dayl. crf23  LR fusion used   3.3% (w 0.019, clamped 73.1%) | 4K history kept  93.6% (c 0.908), new-phase  29.1%
+tos_dayl. crf27  LR fusion used   2.5% (w 0.019, clamped 72.9%) | 4K history kept  93.4% (c 0.908), new-phase  29.1%
+tos_dayl. noisy  LR fusion used  97.9% (w 0.607, clamped 14.0%) | 4K history kept  92.9% (c 0.881), new-phase  20.2%

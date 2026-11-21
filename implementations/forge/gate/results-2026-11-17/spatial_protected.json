@@ -1,0 +1,170 @@
+[
+ {
+  "arm": "clean",
+  "scene": "sintel_rooftop",
+  "frame": 72,
+  "spatial": 0.06470669431404019,
+  "m2_spatial": 0.05470160839441872
+ },
+ {
+  "arm": "clean",
+  "scene": "sintel_rooftop",
+  "frame": 120,
+  "spatial": 0.0757144380062087,
+  "m2_spatial": 0.05702214718458757
+ },
+ {
+  "arm": "clean",
+  "scene": "sintel_rooftop",
+  "frame": 168,
+  "spatial": 0.106774063697749,
+  "m2_spatial": 0.11315733879393806
+ },
+ {
+  "arm": "clean",
+  "scene": "tos_daylight",
+  "frame": 72,
+  "spatial": 0.011123418680035968,
+  "m2_spatial": 0.027135592601215876
+ },
+ {
+  "arm": "clean",
+  "scene": "tos_daylight",
+  "frame": 120,
+  "spatial": 0.00596337874425501,
+  "m2_spatial": 0.056967197605398825
+ },
+ {
+  "arm": "clean",
+  "scene": "tos_daylight",
+  "frame": 168,
+  "spatial": 0.012727852149986063,
+  "m2_spatial": 0.05948426996580334
+ },
+ {
+  "arm": "clean",
+  "scene": "tos_debris",
+  "frame": 72,
+  "spatial": 0.005863343366257823,
+  "m2_spatial": 0.1332635134449601
+ },
+ {
+  "arm": "clean",
+  "scene": "tos_debris",
+  "frame": 120,
+  "spatial": 0.004232833912475087,
+  "m2_spatial": 0.10064194439716473
+ },
+ {
+  "arm": "clean",
+  "scene": "tos_debris",
+  "frame": 168,
+  "spatial": 0.18578689958001604,
+  "m2_spatial": 0.02329290815777628
+ },
+ {
+  "arm": "crf23",
+  "scene": "sintel_rooftop",
+  "frame": 72,
+  "spatial": 0.04781288209098733,
+  "m2_spatial": 0.05338406492192123
+ },
+ {
+  "arm": "crf23",
+  "scene": "sintel_rooftop",
+  "frame": 120,
+  "spatial": 0.04879160754415324,
+  "m2_spatial": 0.05503493846115259
+ },
+ {
+  "arm": "crf23",
+  "scene": "sintel_rooftop",
+  "frame": 168,
+  "spatial": 0.04621909897297982,
+  "m2_spatial": 0.11289626224027483
+ },
+ {
+  "arm": "crf23",
+  "scene": "tos_daylight",
+  "frame": 72,
+  "spatial": 0.023751836640613533,
+  "m2_spatial": 0.026757720845904765
+ },
+ {
+  "arm": "crf23",
+  "scene": "tos_daylight",
+  "frame": 120,
+  "spatial": 0.018286599765360734,
+  "m2_spatial": 0.05735844954687121
+ },
+ {
+  "arm": "crf23",
+  "scene": "tos_daylight",
+  "frame": 168,
+  "spatial": 0.01950615717986892,
+  "m2_spatial": 0.05937949864973807
+ },
+ {
+  "arm": "crf23",
+  "scene": "tos_debris",
+  "frame": 72,
+  "spatial": 0.011019691136027632,
+  "m2_spatial": 0.13428747514765785
+ },
+ {
+  "arm": "crf23",
+  "scene": "tos_debris",
+  "frame": 120,
+  "spatial": 0.010861779708100983,
+  "m2_spatial": 0.10055632622678944
+ },
+ {
+  "arm": "crf23",
+  "scene": "tos_debris",
+  "frame": 168,
+  "spatial": 0.07445696338267993,
+  "m2_spatial": 0.02203143770519396
+ },
+ {
+  "arm": "noisy",
+  "scene": "sintel_rooftop",
+  "frame": 72,
+  "spatial": 1.067353171656201,
+  "m2_spatial": 0.060867084174912246
+ },
+ {
+  "arm": "noisy",
+  "scene": "sintel_rooftop",
+  "frame": 120,
+  "spatial": 1.0575559795818528,
+  "m2_spatial": 0.06270474267542665
+ },
+ {
+  "arm": "noisy",
+  "scene": "sintel_rooftop",
+  "frame": 168,
+  "spatial": 1.6259964664482105,
+  "m2_spatial": 0.10939471679923898
+ },
+ {
+  "arm": "noisy",
+  "scene": "tos_debris",
+  "frame": 72,
+  "spatial": 2.1888591509534834,
+  "m2_spatial": 0.11255057889755052
+ },
+ {
+  "arm": "noisy",
+  "scene": "tos_debris",
+  "frame": 120,
+  "spatial": 1.9763319094153537,
+  "m2_spatial": 0.08420044949297234
+ },
+ {
+  "arm": "noisy",
+  "scene": "tos_debris",
+  "frame": 168,
+  "spatial": 1.1284559328856432,
+  "m2_spatial": 0.032082984111179186
+ }
+]

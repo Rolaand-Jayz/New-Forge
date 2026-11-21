@@ -1,0 +1,11 @@
+crf23a tos_daylight f72  spatial +0.010  old +0.010  fe +0.160  bp +0.226  acc +0.278  | M2 lanczos 0.0268 spatial 0.0266 old 0.0266 fe 0.0265 bp 0.0266 acc 0.0270
+crf23a tos_daylight f120 spatial +0.008  old +0.008  fe +0.167  bp +0.187  acc +0.215  | M2 lanczos 0.0580 spatial 0.0576 old 0.0576 fe 0.0576 bp 0.0575 acc 0.0578
+crf23a tos_daylight f168 spatial +0.008  old +0.008  fe +0.171  bp +0.200  acc +0.223  | M2 lanczos 0.0598 spatial 0.0594 old 0.0594 fe 0.0595 bp 0.0592 acc 0.0593
+
+spatial: crf23a +0.0087
+old    : crf23a +0.0090
+fe     : crf23a +0.1660
+bp     : crf23a +0.2046
+acc    : crf23a +0.2388
+M2 edge flicker mean over 3 pairs: lanczos 0.0482  spatial 0.0478  old 0.0478  fe 0.0479  bp 0.0478  acc 0.0480
+  crf23a M2: lanczos 0.0482  spatial 0.0478  old 0.0478  fe 0.0479  bp 0.0478  acc 0.0480
