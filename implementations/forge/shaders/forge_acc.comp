@@ -1,0 +1,468 @@
+#version 460
+// ============================================================================
+//  ANVIL — shaders/forge_acc.comp   (FORGE 4K accumulation)
+//
+//  Runs after forge_bp.comp (temporal study 2026-11-16, .scratch/forge/
+//  temporal-study/PLAN.md §6b, variant acc_hbn). Torch reference:
+//  tools/forge_accum.py (Accum, flow "plk") — the parity gate. Code domain
+//  (BT.709 OETF or sRGB of linear), history H at output resolution:
+//    f   pyramid Lucas-Kanade cur -> prev on the gamma-2 luma, from zero:
+//        levels 3..0 (box averages of level 0), 3 passes per level, each a
+//        7x7 structure-tensor solve (+lam, step clipped to +-1) then a 5x5
+//        box of the flow; flow carried down by bilinear x2 * 2
+//    c   exp(-(|box3(Y - Yprev(p + f))| / (s0 + k*T))^2)            (LR)
+//    M   3x3 sub-pixel phase coverage (9 bits): nearest-warped, bins
+//        rotated by roundEven(-3 f) mod 3, cleared where c <= 0.5;
+//        nov = bin 0 unseen, then set; s = clamp(1 - T/tref) * nov    (LR)
+//    E   = bicubic(Hprev, x + 3 up(f)) - enc(out)                      (4K)
+//    Hc  = enc(out) + up(c) * (E - U(D(E)))                            (4K)
+//    H   = Hc + up(s) * U(enc(fused) - D(Hc));  out = dec(H)           (4K)
+//  D = lanczos3 x1/3 (17 taps, centre 3i+1), U = lanczos3 x3 (tail
+//  conventions), up = bilinear x3 (align_corners=False, clamped). Reset
+//  (no history): H = enc(out), mask = bin 0.
+//  Spec constant 0 = pass (see main). Push: inSize, outSize, level, flags
+//  (bit 1 BT.709, bit 2 sRGB), s0, k, tref, lam.
+// ============================================================================
+layout(local_size_x_id = 1, local_size_y_id = 2) in;  // 8x8, 16x16 for the 3x-up passes
+layout(constant_id = 0) const uint PASS = 0u;
+const uint P_PYR = 0u, P_LKINIT = 1u, P_LKSOLVE = 2u, P_LKSMOOTH = 3u, P_CONF = 4u, P_RESETMASK = 5u,
+           P_WARPE = 6u, P_DOWNE = 7u, P_HC = 8u, P_DOWNR = 9u, P_OUT = 10u, P_RESET = 11u,
+           P_UNUSED12 = 12u;  // (retired: fused BP apply + warp was slower)
+
+layout(rgba16f, set = 0, binding = 0) uniform image2D uOut;
+layout(rgba16f, set = 0, binding = 1) uniform readonly image2D uHprev;
+layout(rgba16f, set = 0, binding = 2) uniform image2D uHcur;
+layout(rgba16f, set = 0, binding = 3) uniform image2D uE;
+layout(rgba16f, set = 0, binding = 4) uniform readonly image2D uFused;
+layout(r16f, set = 0, binding = 5) uniform readonly image2D uGate;
+layout(r16f, set = 0, binding = 6) uniform readonly image2D uYc;
+layout(r16f, set = 0, binding = 7) uniform readonly image2D uYp;
+// LK pyramid levels 1..3 (current: written by P_PYR; previous: last frame's)
+layout(r32f, set = 0, binding = 8) uniform image2D lkAc1;
+layout(r32f, set = 0, binding = 9) uniform image2D lkAc2;
+layout(r32f, set = 0, binding = 10) uniform image2D lkAc3;
+layout(r32f, set = 0, binding = 11) uniform readonly image2D lkAp1;
+layout(r32f, set = 0, binding = 12) uniform readonly image2D lkAp2;
+layout(r32f, set = 0, binding = 13) uniform readonly image2D lkAp3;
+// flow per level (F) and the pre-smoothing temporary (T)
+layout(rg32f, set = 0, binding = 14) uniform image2D lkF0;
+layout(rg32f, set = 0, binding = 15) uniform image2D lkF1;
+layout(rg32f, set = 0, binding = 16) uniform image2D lkF2;
+layout(rg32f, set = 0, binding = 17) uniform image2D lkF3;
+layout(rg32f, set = 0, binding = 18) uniform image2D lkT0;
+layout(rg32f, set = 0, binding = 19) uniform image2D lkT1;
+layout(rg32f, set = 0, binding = 20) uniform image2D lkT2;
+layout(rg32f, set = 0, binding = 21) uniform image2D lkT3;
+layout(r32ui, set = 0, binding = 22) uniform readonly uimage2D uMaskP;
+layout(r32ui, set = 0, binding = 23) uniform uimage2D uMaskC;
+layout(rg32f, set = 0, binding = 24) uniform image2D lrA;    // (c, s)
+layout(rgba32f, set = 0, binding = 25) uniform image2D lrD;  // D(E) | (r, s)
+layout(rgba32f, set = 0, binding = 26) uniform readonly image2D uBpRes;  // forge_bp.comp pass 0 output
+
+// level-indexed access without descriptor-array dynamic indexing
+float ldAc(uint l, ivec2 p) { return l == 1u ? imageLoad(lkAc1, p).r : l == 2u ? imageLoad(lkAc2, p).r : imageLoad(lkAc3, p).r; }
+void stAc(uint l, ivec2 p, float v) {
+  if (l == 1u) imageStore(lkAc1, p, vec4(v)); else if (l == 2u) imageStore(lkAc2, p, vec4(v)); else imageStore(lkAc3, p, vec4(v));
+}
+float ldAp(uint l, ivec2 p) { return l == 1u ? imageLoad(lkAp1, p).r : l == 2u ? imageLoad(lkAp2, p).r : imageLoad(lkAp3, p).r; }
+vec2 ldF(uint l, ivec2 p) {
+  return l == 0u ? imageLoad(lkF0, p).xy : l == 1u ? imageLoad(lkF1, p).xy : l == 2u ? imageLoad(lkF2, p).xy : imageLoad(lkF3, p).xy;
+}
+void stF(uint l, ivec2 p, vec2 v) {
+  vec4 w = vec4(v, 0.0, 0.0);
+  if (l == 0u) imageStore(lkF0, p, w); else if (l == 1u) imageStore(lkF1, p, w); else if (l == 2u) imageStore(lkF2, p, w); else imageStore(lkF3, p, w);
+}
+vec2 ldT(uint l, ivec2 p) {
+  return l == 0u ? imageLoad(lkT0, p).xy : l == 1u ? imageLoad(lkT1, p).xy : l == 2u ? imageLoad(lkT2, p).xy : imageLoad(lkT3, p).xy;
+}
+void stT(uint l, ivec2 p, vec2 v) {
+  vec4 w = vec4(v, 0.0, 0.0);
+  if (l == 0u) imageStore(lkT0, p, w); else if (l == 1u) imageStore(lkT1, p, w); else if (l == 2u) imageStore(lkT2, p, w); else imageStore(lkT3, p, w);
+}
+
+layout(push_constant, std430) uniform Params {
+  uvec2 inSize;
+  uvec2 outSize;
+  uint level;
+  uint flags;
+  float s0, k, tref, lam;
+  float beta;  // P_BPWARP: back-projection strength
+} pc;
+
+vec3 enc(vec3 l) {
+  vec3 c = clamp(l, 0.0, 1.0);
+  if ((pc.flags & 4u) != 0u)
+    return mix(12.92 * c, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, greaterThan(c, vec3(0.0031308)));
+  return mix(4.5 * c, 1.099 * pow(max(c, vec3(1e-12)), vec3(0.45)) - 0.099, greaterThanEqual(c, vec3(0.018)));
+}
+vec3 dec(vec3 p) {
+  p = clamp(p, 0.0, 1.0);
+  if ((pc.flags & 4u) != 0u)
+    return mix(p / 12.92, pow((p + 0.055) / 1.055, vec3(2.4)), greaterThan(p, vec3(0.04045)));
+  return mix(p / 4.5, pow((p + 0.099) / 1.099, vec3(1.0 / 0.45)), greaterThanEqual(p, vec3(0.081)));
+}
+// fp32 -> nearest fp16 value, ties to even (torch .half()); storing the result to a
+// 16-bit image is then exact whatever rounding the conversion uses (AMD: toward zero)
+vec3 rte16(vec3 v) {
+  uvec3 u = floatBitsToUint(v);
+  u += 0xFFFu + ((u >> 13u) & 1u);
+  return uintBitsToFloat(u & ~0x1FFFu);
+}
+vec3 h16(vec3 v) { return rte16(v); }
+float wL3(float t) {
+  t = abs(t);
+  if (t < 1e-5) return 1.0;
+  if (t >= 3.0) return 0.0;
+  float pt = 3.14159265358979 * t;
+  return 3.0 * sin(pt) * sin(pt / 3.0) / (pt * pt);
+}
+
+// Exactly-3x lanczos3 constants (outSize == 3 * inSize, so every output phase is one of
+// three): UPW[j*6+t] = normalized weight of source tap t for output phase j (base offset
+// UPB[j] from the LR pixel); DNW = normalized 17-tap x1/3 kernel. Values = wL3() in double.
+const float UPW[18] = float[18](1.271680500e-02, -9.373844646e-02, 3.823964103e-01, 8.138755202e-01, -1.464663226e-01, 3.121603349e-02, -1.611881078e-17, 3.223762156e-17, 1.000000000e+00, 3.223762156e-17, -1.611881078e-17, 0.000000000e+00, 3.121603349e-02, -1.464663226e-01, 8.138755202e-01, 3.823964103e-01, -9.373844646e-02, 1.271680500e-02);
+const int UPB[3] = int[3](-3, -2, -2);
+const float DNW[17] = float[17](4.232710884e-03, 1.039006611e-02, -5.388715320e-18, -3.120026944e-02, -4.875042100e-02, 1.077743064e-17, 1.272783099e-01, 2.708934966e-01, 3.343122141e-01, 2.708934966e-01, 1.272783099e-01, 1.077743064e-17, -4.875042100e-02, -3.120026944e-02, -5.388715320e-18, 1.039006611e-02, 4.232710884e-03);
+
+ivec2 lvlSize(uint l) { return max(ivec2(pc.inSize) >> int(l), ivec2(1)); }
+// luma pyramid level l, current (A) / previous (B), clamped
+float lumA(uint l, ivec2 p) {
+  p = clamp(p, ivec2(0), lvlSize(l) - 1);
+  return l == 0u ? imageLoad(uYc, p).r : ldAc(l, p);
+}
+float lumB(uint l, ivec2 p) {
+  p = clamp(p, ivec2(0), lvlSize(l) - 1);
+  return l == 0u ? imageLoad(uYp, p).r : ldAp(l, p);
+}
+// bilinear at a continuous position, coordinate clamped to the frame (grid_sample border)
+float bilB(uint l, vec2 q) {
+  ivec2 hi = lvlSize(l) - 1;
+  q = clamp(q, vec2(0.0), vec2(hi));
+  ivec2 i0 = ivec2(floor(q));
+  vec2 fr = q - vec2(i0);
+  ivec2 i1 = min(i0 + 1, hi);
+  return mix(mix(lumB(l, i0), lumB(l, ivec2(i1.x, i0.y)), fr.x),
+             mix(lumB(l, ivec2(i0.x, i1.y)), lumB(l, i1), fr.x), fr.y);
+}
+vec2 flowAt(uint l, ivec2 p) { return ldF(l, clamp(p, ivec2(0), lvlSize(l) - 1)); }
+// F.interpolate bilinear (align_corners=False, source clamped at 0) of an LR field at output x
+void upCoord(float x, int n, float scale, out int i0, out int i1, out float fr) {
+  float s = max((x + 0.5) * scale - 0.5, 0.0);
+  i0 = min(int(floor(s)), n - 1);
+  i1 = min(i0 + 1, n - 1);
+  fr = s - float(i0);
+}
+
+shared float sh[16 * 16];
+shared float sp[5][14 * 14];
+shared float sq[5][14 * 8];
+const int HT = 38;
+shared vec3 hrT[HT * HT];
+shared vec3 hsum[HT * 8];
+const int LT = 16;
+shared vec4 resT[LT * LT];
+
+// ---------------------------------------------------------------- LK passes
+void pyrPass() {  // levels 1..3 of the current luma: box averages of level 0
+  ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+  for (uint l = 1u; l < 4u; ++l) {
+    ivec2 sz = lvlSize(l);
+    if (p.x >= sz.x || p.y >= sz.y) return;
+    int s = 1 << l;
+    float a = 0.0;
+    for (int j = 0; j < s; ++j)
+      for (int i = 0; i < s; ++i) a += imageLoad(uYc, p * s + ivec2(i, j)).r;
+    stAc(l, p, a / float(s * s));
+  }
+}
+
+void lkInitPass() {  // coarsest: zero; else bilinear x2 of the coarser flow, times 2
+  uint l = pc.level;
+  ivec2 p = ivec2(gl_GlobalInvocationID.xy), sz = lvlSize(l);
+  if (p.x >= sz.x || p.y >= sz.y) return;
+  vec2 f = vec2(0.0);
+  if (l < 3u) {
+    ivec2 cs = lvlSize(l + 1u);
+    int x0, x1, y0, y1;
+    float fx, fy;
+    upCoord(float(p.x), cs.x, float(cs.x) / float(sz.x), x0, x1, fx);
+    upCoord(float(p.y), cs.y, float(cs.y) / float(sz.y), y0, y1, fy);
+    vec2 a = ldF(l + 1u, ivec2(x0, y0)), b = ldF(l + 1u, ivec2(x1, y0));
+    vec2 c = ldF(l + 1u, ivec2(x0, y1)), d = ldF(l + 1u, ivec2(x1, y1));
+    f = 2.0 * mix(mix(a, b, fx), mix(c, d, fx), fy);
+  }
+  stF(l, p, f);
+}
+
+// solve input (pc.level bit 8): 1 = the level init (2 x bilinear x2 of the coarser level's
+// final flow, zero at the coarsest), 0 = lkF. Output: lkT, then P_LKSMOOTH box5(lkT) -> lkF.
+vec2 box5T(uint l, ivec2 p) {
+  ivec2 sz = lvlSize(l);
+  vec2 a = vec2(0.0);
+  for (int j = -2; j <= 2; ++j)
+    for (int i = -2; i <= 2; ++i) a += ldT(l, clamp(p + ivec2(i, j), ivec2(0), sz - 1));
+  return a / 25.0;
+}
+vec2 box5F(uint l, ivec2 p) {
+  ivec2 sz = lvlSize(l);
+  vec2 a = vec2(0.0);
+  for (int j = -2; j <= 2; ++j)
+    for (int i = -2; i <= 2; ++i) a += ldF(l, clamp(p + ivec2(i, j), ivec2(0), sz - 1));
+  return a / 25.0;
+}
+vec2 initFlow(uint l, ivec2 p) {
+  if (l >= 3u) return vec2(0.0);
+  ivec2 sz = lvlSize(l), cs = lvlSize(l + 1u);
+  int x0, x1, y0, y1;
+  float fx, fy;
+  upCoord(float(p.x), cs.x, float(cs.x) / float(sz.x), x0, x1, fx);
+  upCoord(float(p.y), cs.y, float(cs.y) / float(sz.y), y0, y1, fy);
+  vec2 a = ldF(l + 1u, ivec2(x0, y0)), b = ldF(l + 1u, ivec2(x1, y0));
+  vec2 c = ldF(l + 1u, ivec2(x0, y1)), d = ldF(l + 1u, ivec2(x1, y1));
+  return 2.0 * mix(mix(a, b, fx), mix(c, d, fx), fy);
+}
+vec2 flowIn(uint l, ivec2 q, uint mode) {
+  q = clamp(q, ivec2(0), lvlSize(l) - 1);
+  return mode == 1u ? initFlow(l, q) : ldF(l, q);
+}
+
+void lkSolvePass() {
+  uint l = pc.level & 0xFFu, mode = (pc.level >> 8u) & 3u;
+  ivec2 sz = lvlSize(l), hi = sz - 1;
+  const ivec2 o = ivec2(gl_WorkGroupID.xy) * 8;
+  const uint lid = gl_LocalInvocationIndex;
+  // warped previous luma Bw over [o-4, o+11], each at its clamped position
+  for (uint i = lid; i < 256u; i += 64u) {
+    ivec2 q = clamp(o - 4 + ivec2(int(i) % 16, int(i) / 16), ivec2(0), hi);
+    sh[i] = bilB(l, vec2(q) + flowIn(l, q, mode));
+  }
+  barrier();
+  // products over [o-3, o+10] at clamped positions
+  for (uint i = lid; i < 196u; i += 64u) {
+    ivec2 qc = clamp(o - 3 + ivec2(int(i) % 14, int(i) / 14), ivec2(0), hi);
+    ivec2 t = qc - (o - 4);
+    ivec2 xm = clamp(qc - ivec2(1, 0), ivec2(0), hi) - (o - 4), xp = clamp(qc + ivec2(1, 0), ivec2(0), hi) - (o - 4);
+    ivec2 ym = clamp(qc - ivec2(0, 1), ivec2(0), hi) - (o - 4), yp = clamp(qc + ivec2(0, 1), ivec2(0), hi) - (o - 4);
+    float ix = (sh[xp.y * 16 + xp.x] - sh[xm.y * 16 + xm.x]) * 0.5;
+    float iy = (sh[yp.y * 16 + yp.x] - sh[ym.y * 16 + ym.x]) * 0.5;
+    float e = sh[t.y * 16 + t.x] - lumA(l, qc);
+    sp[0][i] = ix * ix; sp[1][i] = ix * iy; sp[2][i] = iy * iy; sp[3][i] = ix * e; sp[4][i] = iy * e;
+  }
+  barrier();
+  for (uint i = lid; i < 112u; i += 64u) {
+    int r = int(i) / 8, cc = int(i) % 8;
+    for (int k = 0; k < 5; ++k) {
+      float a = 0.0;
+      for (int t = 0; t < 7; ++t) a += sp[k][r * 14 + cc + t];
+      sq[k][i] = a;
+    }
+  }
+  barrier();
+  ivec2 lc = ivec2(gl_LocalInvocationID.xy), p = o + lc;
+  if (p.x >= sz.x || p.y >= sz.y) return;
+  float S[5];
+  for (int k = 0; k < 5; ++k) {
+    float a = 0.0;
+    for (int t = 0; t < 7; ++t) a += sq[k][(lc.y + t) * 8 + lc.x];
+    S[k] = a / 49.0;
+  }
+  float sxx = S[0] + pc.lam, sxy = S[1], syy = S[2] + pc.lam, sxe = S[3], sye = S[4];
+  float det = sxx * syy - sxy * sxy;
+  float du = clamp((syy * sxe - sxy * sye) / det, -1.0, 1.0);
+  float dv = clamp((sxx * sye - sxy * sxe) / det, -1.0, 1.0);
+  stT(l, p, flowIn(l, p, mode) - vec2(du, dv));
+}
+
+void lkSmoothPass() {  // 5x5 box of the flow, replicate edges
+  uint l = pc.level & 0xFFu;
+  ivec2 p = ivec2(gl_GlobalInvocationID.xy), sz = lvlSize(l);
+  if (p.x >= sz.x || p.y >= sz.y) return;
+  vec2 a = vec2(0.0);
+  for (int j = -2; j <= 2; ++j)
+    for (int i = -2; i <= 2; ++i) a += ldT(l, clamp(p + ivec2(i, j), ivec2(0), sz - 1));
+  stF(l, p, a / 25.0);
+}
+
+// ---------------------------------------------------------------- LR confidence / phase mask
+void confPass() {
+  ivec2 p = ivec2(gl_GlobalInvocationID.xy), hi = ivec2(pc.inSize) - 1;
+  if (p.x > hi.x || p.y > hi.y) return;
+  float R = 0.0;
+  for (int j = -1; j <= 1; ++j)
+    for (int i = -1; i <= 1; ++i) {
+      ivec2 q = clamp(p + ivec2(i, j), ivec2(0), hi);
+      R += lumA(0u, q) - bilB(0u, vec2(q) + flowAt(0u, q));
+    }
+  R = abs(R / 9.0);
+  float T = imageLoad(uGate, p).r;
+  float d = R / (pc.s0 + pc.k * T);
+  float c = exp(-d * d);
+  vec2 f = flowAt(0u, p);
+  ivec2 nq = ivec2(roundEven(clamp(vec2(p) + f, vec2(0.0), vec2(hi))));
+  uint m = imageLoad(uMaskP, nq).r, mr = 0u;
+  ivec2 qq = ivec2(roundEven(-3.0 * f));
+  qq -= 3 * ivec2(floor(vec2(qq) / 3.0));  // python-style mod (GLSL % is undefined for negatives)
+  for (int bx = 0; bx < 3; ++bx)
+    for (int by = 0; by < 3; ++by) {
+      int sx = (bx - qq.x + 3) - 3 * ((bx - qq.x + 3) / 3), sy = (by - qq.y + 3) - 3 * ((by - qq.y + 3) / 3);
+      if ((m & (1u << uint(sx * 3 + sy))) != 0u) mr |= 1u << uint(bx * 3 + by);
+    }
+  if (!(c > 0.5)) mr = 0u;
+  float nov = (mr & 1u) != 0u ? 0.0 : 1.0;
+  imageStore(uMaskC, p, uvec4(mr | 1u));
+  float g = clamp(1.0 - T / pc.tref, 0.0, 1.0);
+  imageStore(lrA, p, vec4(c, g * nov, 0.0, 0.0));
+}
+void resetMaskPass() {
+  ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+  if (p.x >= int(pc.inSize.x) || p.y >= int(pc.inSize.y)) return;
+  imageStore(uMaskC, p, uvec4(1u));
+}
+
+// ---------------------------------------------------------------- 4K passes
+vec4 cubicW(float t) {  // cubic convolution, a = -0.75; taps at -1, 0, 1, 2 (forge_fuse.comp)
+  const float A = -0.75;
+  float t1 = t + 1.0, t2 = 1.0 - t, t3 = 2.0 - t;
+  return vec4(((A * t1 - 5.0 * A) * t1 + 8.0 * A) * t1 - 4.0 * A,
+              ((A + 2.0) * t - (A + 3.0)) * t * t + 1.0,
+              ((A + 2.0) * t2 - (A + 3.0)) * t2 * t2 + 1.0,
+              ((A * t3 - 5.0 * A) * t3 + 8.0 * A) * t3 - 4.0 * A);
+}
+vec3 warpedHist(ivec2 x) {  // bicubic(Hprev, x + 3 up(f)(x))
+  ivec2 hiO = ivec2(pc.outSize) - 1, n = ivec2(pc.inSize);
+  int x0, x1, y0, y1;
+  float fx, fy;
+  upCoord(float(x.x), n.x, float(n.x) / float(pc.outSize.x), x0, x1, fx);
+  upCoord(float(x.y), n.y, float(n.y) / float(pc.outSize.y), y0, y1, fy);
+  vec2 a = imageLoad(lkF0, ivec2(x0, y0)).xy, b = imageLoad(lkF0, ivec2(x1, y0)).xy;
+  vec2 c = imageLoad(lkF0, ivec2(x0, y1)).xy, d = imageLoad(lkF0, ivec2(x1, y1)).xy;
+  vec2 q = vec2(x) + 3.0 * mix(mix(a, b, fx), mix(c, d, fx), fy);
+  ivec2 q0 = ivec2(floor(q));
+  vec2 fr = q - vec2(q0);
+  vec4 wx = cubicW(fr.x), wy = cubicW(fr.y);
+  vec3 hw = vec3(0.0);
+  for (int j = 0; j < 4; ++j) {
+    vec3 row = vec3(0.0);
+    for (int i = 0; i < 4; ++i) row += wx[i] * imageLoad(uHprev, clamp(q0 + ivec2(i - 1, j - 1), ivec2(0), hiO)).rgb;
+    hw += wy[j] * row;
+  }
+  return hw;
+}
+void warpEPass() {
+  ivec2 x = ivec2(gl_GlobalInvocationID.xy), hiO = ivec2(pc.outSize) - 1;
+  if (x.x > hiO.x || x.y > hiO.y) return;
+  imageStore(uE, x, vec4(rte16(warpedHist(x) - enc(imageLoad(uOut, x).rgb)), 0.0));
+}
+
+// D: 8x8 LR outputs from a 38x38 4K region (forge_bp.comp pass 0 without the encode)
+vec3 down3At(bool fromE) {
+  const ivec2 o = ivec2(gl_WorkGroupID.xy) * 8;
+  const ivec2 h0 = 3 * o - 7, hiHR = ivec2(pc.outSize) - 1;
+  const uint lid = gl_LocalInvocationIndex;
+  for (uint i = lid; i < uint(HT * HT); i += 64u) {
+    ivec2 q = clamp(h0 + ivec2(int(i) % HT, int(i) / HT), ivec2(0), hiHR);
+    hrT[i] = fromE ? imageLoad(uE, q).rgb : imageLoad(uHcur, q).rgb;
+  }
+  barrier();
+  for (uint i = lid; i < uint(HT * 8); i += 64u) {
+    int r = int(i) / 8, c = int(i) % 8;
+    vec3 a = vec3(0.0);
+    for (int t = 0; t < 17; ++t) a += DNW[t] * hrT[r * HT + 3 * c + t];
+    hsum[i] = a;
+  }
+  barrier();
+  ivec2 l = ivec2(gl_LocalInvocationID.xy);
+  vec3 d = vec3(0.0);
+  for (int t = 0; t < 17; ++t) d += DNW[t] * hsum[(3 * l.y + t) * 8 + l.x];
+  return d;
+}
+void downEPass() {
+  vec3 d = down3At(true);
+  ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+  if (p.x >= int(pc.inSize.x) || p.y >= int(pc.inSize.y)) return;
+  imageStore(lrD, p, vec4(d, 0.0));
+}
+void downRPass() {
+  vec3 d = down3At(false);
+  ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+  if (p.x >= int(pc.inSize.x) || p.y >= int(pc.inSize.y)) return;
+  vec3 r = enc(imageLoad(uFused, p).rgb) - d;
+  imageStore(lrD, p, vec4(r, imageLoad(lrA, p).y));
+}
+
+vec2 dstToSrc(vec2 d) { return (d + 0.5) * (vec2(pc.inSize) / vec2(pc.outSize)) - 0.5; }
+
+
+// Per-output-pixel 3x up: 16x16 threads = 16x16 output pixels; the 13x13 LR texels they
+// touch are staged once. Same tap order as before (6 horizontal sums, then vertical).
+const int UT = 13;
+shared vec4 upT[UT * UT];
+
+// mode 0 HC: U(lrD.rgb) with w = bilinear(lrA.x) (confidence); 1 OUT: U(lrD.rgb), w = bilinear(lrD.a)
+void upPixel(uint mode) {
+  const bool hc = mode == 0u;
+  const ivec2 o = ivec2(gl_WorkGroupID.xy) * 16, lo = o / 3 - 3, hiLR = ivec2(pc.inSize) - 1;
+  const uint lid = gl_LocalInvocationIndex;
+  for (uint i = lid; i < uint(UT * UT); i += 256u) {
+    ivec2 q = clamp(lo + ivec2(int(i) % UT, int(i) / UT), ivec2(0), hiLR);
+    vec4 v = imageLoad(lrD, q);
+    if (hc) v.a = imageLoad(lrA, q).x;
+    upT[i] = v;
+  }
+  barrier();
+  ivec2 dst = o + ivec2(gl_LocalInvocationID.xy);
+  if (dst.x >= int(pc.outSize.x) || dst.y >= int(pc.outSize.y)) return;
+  ivec2 p = dst / 3, j = dst - 3 * p;
+  vec3 up = vec3(0.0);
+  for (int jj = 0; jj < 6; ++jj) {
+    int ty = p.y + UPB[j.y] + jj - lo.y;
+    vec3 a = vec3(0.0);
+    for (int ii = 0; ii < 6; ++ii) a += UPW[j.x * 6 + ii] * upT[ty * UT + p.x + UPB[j.x] + ii - lo.x].rgb;
+    up += UPW[j.y * 6 + jj] * a;
+  }
+  vec2 b = max(dstToSrc(vec2(dst)), vec2(0.0));
+  ivec2 b0 = ivec2(floor(b)), b1 = min(b0 + 1, hiLR);
+  vec2 bf = b - vec2(b0);
+  ivec2 t0 = b0 - lo, t1 = b1 - lo;
+  float w = mix(mix(upT[t0.y * UT + t0.x].a, upT[t0.y * UT + t1.x].a, bf.x),
+                mix(upT[t1.y * UT + t0.x].a, upT[t1.y * UT + t1.x].a, bf.x), bf.y);
+  if (hc) {
+    vec3 xc = enc(imageLoad(uOut, dst).rgb);
+    vec3 e = imageLoad(uE, dst).rgb;
+    imageStore(uHcur, dst, vec4(rte16(xc + w * (e - up)), 0.0));
+  } else {
+    vec3 h = h16(clamp(imageLoad(uHcur, dst).rgb + w * up, -0.1, 1.1));
+    imageStore(uHcur, dst, vec4(h, 0.0));
+    if ((pc.flags & 256u) != 0u) {  // debug: LR flow (/64 + 0.5, or fract(8 f)), confidence (linear)
+      vec2 f = imageLoad(lkF0, p).xy;
+      vec3 v = (pc.flags & 512u) != 0u ? vec3(fract(f * 8.0), imageLoad(lrA, p).x)
+                                       : clamp(vec3(0.5 + f / 64.0, imageLoad(lrA, p).x), 0.0, 1.0);
+      imageStore(uOut, dst, vec4(v, 1.0));
+    } else {
+      imageStore(uOut, dst, vec4(rte16(dec(h)), 1.0));
+    }
+  }
+}
+
+void resetPass() {
+  ivec2 x = ivec2(gl_GlobalInvocationID.xy);
+  if (x.x >= int(pc.outSize.x) || x.y >= int(pc.outSize.y)) return;
+  vec3 h = h16(clamp(enc(imageLoad(uOut, x).rgb), -0.1, 1.1));
+  imageStore(uHcur, x, vec4(h, 0.0));
+  imageStore(uOut, x, vec4(rte16(dec(h)), 1.0));
+}
+
+void main() {
+  if (PASS == P_PYR) pyrPass();
+  else if (PASS == P_LKINIT) lkInitPass();
+  else if (PASS == P_LKSOLVE) lkSolvePass();
+  else if (PASS == P_LKSMOOTH) lkSmoothPass();
+  else if (PASS == P_CONF) confPass();
+  else if (PASS == P_RESETMASK) resetMaskPass();
+  else if (PASS == P_WARPE) warpEPass();
+  else if (PASS == P_DOWNE) downEPass();
+  else if (PASS == P_HC) upPixel(0u);
+  else if (PASS == P_DOWNR) downRPass();
+  else if (PASS == P_OUT) upPixel(1u);
+  else resetPass();
+}

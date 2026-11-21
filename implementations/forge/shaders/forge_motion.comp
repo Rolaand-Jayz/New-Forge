@@ -1,0 +1,120 @@
+#version 460
+#extension GL_EXT_samplerless_texture_functions : require
+// ============================================================================
+//  ANVIL — shaders/forge_motion.comp   (FORGE temporal path, motion estimate)
+//
+//  First-party block matcher (no codec vectors, so it works with hardware
+//  decode). One invocation per 8x8 INPUT-pixel block b; output = motion of
+//  the block, current -> previous frame, in input pixels (dx, dy):
+//    level 2 (1/4 res): 6x6 window  [2b-2, 2b+4),  candidates d in [-2,2]^2
+//    level 1 (1/2 res): 8x8 window  [4b-2, 4b+6),  2*d2 + [-1,1]^2
+//    level 0 (full)   : 16x16 window [8b-4, 8b+12), 2*d1 + [-1,1]^2
+//  cost = mean |cur(p) - prev(p + d)| + LAM * (|dx| + |dy|) * levelScale
+//  (levelScale 1/4, 1/2, 1), first strictly-lower candidate wins in
+//  (ey outer, ex inner) scan order; clamp-to-edge. Sub-pixel: a parabola
+//  through the three level-0 costs along each axis whose best offset is 0,
+//  clamped to +-0.5. The offline replica is tools/forge_temporal.py.
+//  Runs on the pyramids of the RAW input frames (forge_pyr.comp).
+//
+//  Bindings: 9/10/11 r16f current L0/L1/L2 (read), 12/13/14 texture2D
+//            previous L0/L1/L2, 15 rg16f flow (write, inSize / 8).
+// ============================================================================
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(r16f, set = 0, binding = 9) uniform readonly image2D uC0;
+layout(r16f, set = 0, binding = 10) uniform readonly image2D uC1;
+layout(r16f, set = 0, binding = 11) uniform readonly image2D uC2;
+layout(set = 0, binding = 12) uniform texture2D uP0;
+layout(set = 0, binding = 13) uniform texture2D uP1;
+layout(set = 0, binding = 14) uniform texture2D uP2;
+layout(rg16f, set = 0, binding = 15) uniform writeonly image2D uFlow;
+
+layout(push_constant, std430) uniform Params {
+  uvec2 inSize;
+  uvec2 outSize;
+  uint wOff;
+  uint flags;
+  float kappa, amin, tref;
+  uint gSlot;
+  float gScale;
+  float hold;
+} pc;
+
+const float LAM = 0.004;
+
+float sad2(ivec2 o, ivec2 d) {
+  ivec2 hi = ivec2(pc.inSize) / 4 - 1;
+  float s = 0.0;
+  for (int j = 0; j < 6; ++j)
+    for (int i = 0; i < 6; ++i) {
+      ivec2 q = o + ivec2(i, j);
+      s += abs(imageLoad(uC2, clamp(q, ivec2(0), hi)).r - texelFetch(uP2, clamp(q + d, ivec2(0), hi), 0).r);
+    }
+  return s / 36.0;
+}
+float sad1(ivec2 o, ivec2 d) {
+  ivec2 hi = ivec2(pc.inSize) / 2 - 1;
+  float s = 0.0;
+  for (int j = 0; j < 8; ++j)
+    for (int i = 0; i < 8; ++i) {
+      ivec2 q = o + ivec2(i, j);
+      s += abs(imageLoad(uC1, clamp(q, ivec2(0), hi)).r - texelFetch(uP1, clamp(q + d, ivec2(0), hi), 0).r);
+    }
+  return s / 64.0;
+}
+float sad0(ivec2 o, ivec2 d) {
+  ivec2 hi = ivec2(pc.inSize) - 1;
+  float s = 0.0;
+  for (int j = 0; j < 16; ++j)
+    for (int i = 0; i < 16; ++i) {
+      ivec2 q = o + ivec2(i, j);
+      s += abs(imageLoad(uC0, clamp(q, ivec2(0), hi)).r - texelFetch(uP0, clamp(q + d, ivec2(0), hi), 0).r);
+    }
+  return s / 256.0;
+}
+float pen(ivec2 d, float sc) { return LAM * float(abs(d.x) + abs(d.y)) * sc; }
+
+void main() {
+  ivec2 b = ivec2(gl_GlobalInvocationID.xy);
+  ivec2 grid = ivec2(pc.inSize) / 8;
+  if (b.x >= grid.x || b.y >= grid.y) return;
+
+  float best = 1e30;
+  ivec2 d2 = ivec2(0);
+  for (int ey = -2; ey <= 2; ++ey)
+    for (int ex = -2; ex <= 2; ++ex) {
+      ivec2 d = ivec2(ex, ey);
+      float c = sad2(2 * b - 2, d) + pen(d, 0.25);
+      if (c < best) { best = c; d2 = d; }
+    }
+  best = 1e30;
+  ivec2 d1 = ivec2(0);
+  for (int ey = -1; ey <= 1; ++ey)
+    for (int ex = -1; ex <= 1; ++ex) {
+      ivec2 d = 2 * d2 + ivec2(ex, ey);
+      float c = sad1(4 * b - 2, d) + pen(d, 0.5);
+      if (c < best) { best = c; d1 = d; }
+    }
+  best = 1e30;
+  ivec2 e0 = ivec2(0);
+  float cs[9];
+  for (int ey = -1; ey <= 1; ++ey)
+    for (int ex = -1; ex <= 1; ++ex) {
+      ivec2 d = 2 * d1 + ivec2(ex, ey);
+      float c = sad0(8 * b - 4, d) + pen(d, 1.0);
+      cs[(ey + 1) * 3 + (ex + 1)] = c;
+      if (c < best) { best = c; e0 = ivec2(ex, ey); }
+    }
+  vec2 f = vec2(2 * d1 + e0);
+  if (e0.x == 0) {
+    int r = (e0.y + 1) * 3;
+    float den = cs[r] + cs[r + 2] - 2.0 * cs[r + 1];
+    if (den > 1e-6) f.x += clamp(0.5 * (cs[r] - cs[r + 2]) / den, -0.5, 0.5);
+  }
+  if (e0.y == 0) {
+    int c = e0.x + 1;
+    float den = cs[c] + cs[6 + c] - 2.0 * cs[3 + c];
+    if (den > 1e-6) f.y += clamp(0.5 * (cs[c] - cs[6 + c]) / den, -0.5, 0.5);
+  }
+  imageStore(uFlow, b, vec4(f, 0.0, 0.0));
+}

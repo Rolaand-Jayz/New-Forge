@@ -1,0 +1,177 @@
+#version 460
+#extension GL_EXT_samplerless_texture_functions : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+// ============================================================================
+//  ANVIL — shaders/forge_tail.comp   (FORGE tail + pixel shuffle + composite)
+//
+//  First-party (FORGE-NEW-MODEL.md §1/§2). One invocation per INPUT pixel
+//  (y, x); it writes the 3x3 output block (3y+i, 3x+j):
+//     d[k]  = tail.bias[k] + sum_ci tail.weight[k][ci] * feat[ci]   (k < 27)
+//     delta = pixel_shuffle(d, 3): output (3y+i, 3x+j) channel c <- d[c*9+i*3+j]
+//     base  = lanczos3(in) exactly as shaders/scaler.comp mode 2 (6x6 direct,
+//             weight-sum normalized, clamp-to-edge, dstToSrc, max(c, 0)),
+//             rounded to fp16 (the rgba16f base the training replica uses:
+//             forge_player_io.player_base)
+//     out   = clamp(base + delta, 0, 1), alpha 1   (linear light, rgba16f)
+//  Base domain (flags bits 1/2, ForgeStage from the source transfer): the
+//  lanczos3 base is computed on the CODE values the content was downscaled
+//  in (BT.709 OETF or sRGB encode of the linear input), then decoded back:
+//     base = f16(decode(clamp(f16(max(lanczos3(encode(in)), 0)), 0, 1)))
+//  (forge_player_io.player_base_code). Neither bit = the linear-light base.
+//  The lanczos taps of an 8x8-input-pixel tile (24x24 outputs) are staged in
+//  shared memory (16x16 texels, origin -4). Same weights/mapping/edge policy
+//  as scaler.comp, evaluated separably (3x fewer taps); a zero tail
+//  reproduces the scaler arm to within fp32 ulps (gate: max 1 code).
+//  Assumes outSize == 3 * inSize (ForgeStage guarantees it).
+//
+//  Bindings: 0 texture2D uIn, 1 SSBO float wt[], 3 SSBO uvec4 fin[],
+//            4 rgba16f image2D uOut.  Push: inSize, outSize, wOff =
+//            tail.weight offset (tail.bias at wOff + 864).
+// ============================================================================
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(constant_id = 0) const bool FP32 = false;
+const uint WORDS = FP32 ? 8u : 4u;
+const int LT = 16;  // shared texel tile edge (8 + 4 left + 4 right)
+
+layout(set = 0, binding = 0) uniform texture2D uIn;
+layout(std430, set = 0, binding = 1) restrict readonly buffer Weights { float wt[]; };
+layout(std430, set = 0, binding = 3) restrict readonly buffer FeatIn { uvec4 fin[]; };
+layout(rgba16f, set = 0, binding = 4) uniform writeonly image2D uOut;
+
+layout(push_constant, std430) uniform Params {
+  uvec2 inSize;
+  uvec2 outSize;
+  uint wOff;
+  uint flags;  // bit 1: BT.709 code-domain base, bit 2: sRGB code-domain base
+} pc;
+
+vec4 encodeBase(vec4 l) {
+  if ((pc.flags & 2u) != 0u) {
+    vec3 c = clamp(l.rgb, 0.0, 1.0);
+    return vec4(mix(4.5 * c, 1.099 * pow(c, vec3(0.45)) - 0.099, greaterThanEqual(c, vec3(0.018))), l.a);
+  }
+  if ((pc.flags & 4u) != 0u) {
+    vec3 c = clamp(l.rgb, 0.0, 1.0);
+    return vec4(mix(12.92 * c, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, greaterThan(c, vec3(0.0031308))), l.a);
+  }
+  return l;
+}
+vec3 decodeBase(vec3 p) {
+  if ((pc.flags & 2u) != 0u) {
+    p = clamp(vec3(f16vec3(p)), 0.0, 1.0);
+    return vec3(f16vec3(mix(p / 4.5, pow((p + 0.099) / 1.099, vec3(1.0 / 0.45)), greaterThanEqual(p, vec3(0.081)))));
+  }
+  if ((pc.flags & 4u) != 0u) {
+    p = clamp(vec3(f16vec3(p)), 0.0, 1.0);
+    return vec3(f16vec3(mix(p / 12.92, pow((p + 0.055) / 1.055, vec3(2.4)), greaterThan(p, vec3(0.04045)))));
+  }
+  return vec3(f16vec3(p));  // rgba16f base (RNE), as in training
+}
+
+shared vec4 texels[LT * LT];
+
+// --- verbatim scaler.comp math (dstToSrc, wLanczos3) -----------------------
+vec2 dstToSrc(vec2 d) {
+  return (d + 0.5) * (vec2(pc.inSize) / vec2(pc.outSize)) - 0.5;
+}
+float wLanczos3(float t) {
+  t = abs(t);
+  if (t < 1e-5) return 1.0;
+  if (t >= 3.0) return 0.0;
+  float pt = 3.14159265358979 * t;
+  return 3.0 * sin(pt) * sin(pt / 3.0) / (pt * pt);
+}
+
+void main() {
+  const ivec2 org = ivec2(gl_WorkGroupID.xy) * 8 - 4;
+  const uint lid = gl_LocalInvocationIndex;
+  for (uint i = lid; i < uint(LT * LT); i += 64u) {
+    ivec2 q = org + ivec2(int(i) % LT, int(i) / LT);
+    texels[i] = encodeBase(texelFetch(uIn, clamp(q, ivec2(0), ivec2(pc.inSize) - 1), 0));  // fetchClamp
+  }
+  barrier();
+
+  ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+  if (p.x >= int(pc.inSize.x) || p.y >= int(pc.inSize.y)) return;
+
+  // Own feature vector.
+  float f[32];
+  uint pix = uint(p.y) * pc.inSize.x + uint(p.x), npix = pc.inSize.x * pc.inSize.y;
+  if (FP32) {
+    for (uint k = 0u; k < 8u; ++k) {
+      vec4 v = uintBitsToFloat(fin[k * npix + pix]);
+      f[4u * k] = v.x; f[4u * k + 1u] = v.y; f[4u * k + 2u] = v.z; f[4u * k + 3u] = v.w;
+    }
+  } else {
+    for (uint k = 0u; k < 4u; ++k) {
+      uvec4 u = fin[k * npix + pix];
+      vec2 a = vec2(unpackFloat2x16(u.x)), b = vec2(unpackFloat2x16(u.y));
+      vec2 c = vec2(unpackFloat2x16(u.z)), d = vec2(unpackFloat2x16(u.w));
+      f[8u * k] = a.x; f[8u * k + 1u] = a.y; f[8u * k + 2u] = b.x; f[8u * k + 3u] = b.y;
+      f[8u * k + 4u] = c.x; f[8u * k + 5u] = c.y; f[8u * k + 6u] = d.x; f[8u * k + 7u] = d.y;
+    }
+  }
+
+  // Lanczos weights per output column (j) / row (i) — identical values to
+  // scaler.comp's per-pixel computation (same expressions, same inputs).
+  float wx[3][6], wy[3][6];
+  int bx[3], by[3];
+  for (int j = 0; j < 3; ++j) {
+    vec2 s = dstToSrc(vec2(float(3 * p.x + j), float(3 * p.y + j)));
+    vec2 fr = fract(s);
+    bx[j] = int(floor(s.x)) - 2;
+    by[j] = int(floor(s.y)) - 2;
+    for (int t = 0; t < 6; ++t) {
+      wx[j][t] = wLanczos3(float(t - 2) - fr.x);
+      wy[j][t] = wLanczos3(float(t - 2) - fr.y);
+    }
+  }
+
+  // Separable evaluation of the same 6x6 kernel: horizontal 6-tap sums for
+  // the 7 source rows this 3x3 output block touches (by[0] .. by[0]+6), then
+  // the vertical 6-tap sum per output. Mathematically identical to
+  // scaler.comp's direct 36-tap loop (weights are the products wx*wy and the
+  // normalizer is sum(wx)*sum(wy)); fp32 rounding differs only at the ulp
+  // level (measured against the scaler arm: see the zero-tail parity gate).
+  const int r0 = by[0];
+  vec4 hr[3][7];
+  float sx[3], sy[3];
+  for (int j = 0; j < 3; ++j) {
+    sx[j] = 0.0;
+    sy[j] = 0.0;
+    for (int t = 0; t < 6; ++t) {
+      sx[j] += wx[j][t];
+      sy[j] += wy[j][t];
+    }
+  }
+  for (int r = 0; r < 7; ++r) {
+    int ty = clamp(r0 + r - org.y, 0, LT - 1);
+    for (int j = 0; j < 3; ++j) {
+      vec4 a = vec4(0.0);
+      for (int ii = 0; ii < 6; ++ii)
+        a += wx[j][ii] * texels[ty * LT + clamp(bx[j] + ii - org.x, 0, LT - 1)];
+      hr[j][r] = a;
+    }
+  }
+
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) {
+      ivec2 dst = ivec2(3 * p.x + j, 3 * p.y + i);
+      if (dst.x >= int(pc.outSize.x) || dst.y >= int(pc.outSize.y)) continue;
+      vec4 acc = vec4(0.0);
+      for (int jj = 0; jj < 6; ++jj) acc += wy[i][jj] * hr[j][clamp(by[i] + jj - r0, 0, 6)];
+      vec4 c = acc / max(sx[j] * sy[i], 1e-6);
+      c = max(c, vec4(0.0));
+      vec3 base = decodeBase(c.rgb);
+
+      vec3 delta;
+      for (int ch = 0; ch < 3; ++ch) {
+        uint k = uint(ch * 9 + i * 3 + j);
+        float acc2 = wt[pc.wOff + 864u + k];
+        for (uint ci = 0u; ci < 32u; ++ci) acc2 = fma(wt[pc.wOff + k * 32u + ci], f[ci], acc2);
+        delta[ch] = acc2;
+      }
+      imageStore(uOut, dst, vec4(clamp(base + delta, 0.0, 1.0), 1.0));
+    }
+  }
+}

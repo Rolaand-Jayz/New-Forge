@@ -1,0 +1,6 @@
+# Local working data (never committed): corpus, test clips, built weights, run outputs
+.scratch/
+research/
+assets/testmedia/
+__pycache__/
+*.pt

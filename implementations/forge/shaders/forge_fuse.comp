@@ -1,0 +1,128 @@
+#version 460
+#extension GL_EXT_samplerless_texture_functions : require
+// ============================================================================
+//  ANVIL — shaders/forge_fuse.comp   (FORGE temporal path: history fusion)
+//
+//  First-party. Temporal fusion at INPUT resolution, BEFORE the net (one
+//  invocation per input pixel p). With S = sqrt(cur) (gamma-2 coding),
+//  f = block motion at p (bilinear between block centres, input px,
+//  current -> previous), and from the PREVIOUS frame, sampled at p + f:
+//     Hw = fused history (gamma-2 coded), bicubic (a = -0.75), clamp-to-edge
+//     Tw = noise gate the net computed on that frame, bilinear
+//  the fused frame is
+//     Hw clamped to [min, max] of the current 3x3 neighbourhood (gamma-2)
+//        widened by ncl (pc.ncl < 0 disables)
+//     Hc = S + clamp(Hw - S, -kappa*Tw, +kappa*Tw)    noise-band clamp: the
+//                                history may move a pixel only as far as the
+//                                local noise level explains
+//     a  = 1 - (1 - amin) * clamp(Tw / tref, 0, 1)
+//     F  = a*S + (1 - a)*Hc ;   fused = F*F ;   history' = F
+//  Tw == 0 (clean content) or no valid history (flags bit 0 clear): fused is
+//  the input, bit-exact, and history' = sqrt(input). The net and the lanczos3
+//  base then run on `fused` instead of the raw input.
+//
+//  Bindings: 0 texture2D uIn (raw input), 5 texture history (prev), 7 texture
+//            flow (inSize/8), 8 texture gate (prev), 4 rgba16f fused (write),
+//            6 rgba16f history (write).
+// ============================================================================
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform texture2D uIn;
+layout(set = 0, binding = 5) uniform sampler2D uHist;
+layout(set = 0, binding = 7) uniform sampler2D uFlow;
+layout(set = 0, binding = 8) uniform sampler2D uGate;
+layout(rgba16f, set = 0, binding = 4) uniform writeonly image2D uFused;
+layout(rgba16f, set = 0, binding = 6) uniform writeonly image2D uHistOut;
+
+layout(push_constant, std430) uniform Params {
+  uvec2 inSize;
+  uvec2 outSize;
+  uint wOff;
+  uint flags;
+  float kappa, amin, tref;
+  uint gSlot;
+  float gScale;
+  float hold;
+  float ncl;   // neighbourhood clamp margin (gamma-2 units); < 0 = off
+} pc;
+
+// bilinear flow at input pixel p from the block grid (block centres at
+// 8b + 4 in corner-based input coordinates), clamp-to-edge
+vec2 flowAt(ivec2 p) {
+  ivec2 g = ivec2(pc.inSize) / 8;
+  vec2 s = (vec2(p) + 0.5) / 8.0 - 0.5;
+  ivec2 i0 = ivec2(floor(s));
+  vec2 fr = s - vec2(i0);
+  ivec2 a = clamp(i0, ivec2(0), g - 1), b = clamp(i0 + 1, ivec2(0), g - 1);
+  vec2 f00 = texelFetch(uFlow, ivec2(a.x, a.y), 0).rg, f10 = texelFetch(uFlow, ivec2(b.x, a.y), 0).rg;
+  vec2 f01 = texelFetch(uFlow, ivec2(a.x, b.y), 0).rg, f11 = texelFetch(uFlow, ivec2(b.x, b.y), 0).rg;
+  return mix(mix(f00, f10, fr.x), mix(f01, f11, fr.x), fr.y);
+}
+
+vec4 cubicW(float t) {  // cubic convolution, a = -0.75; taps at -1, 0, 1, 2
+  const float A = -0.75;
+  float t1 = t + 1.0, t2 = 1.0 - t, t3 = 2.0 - t;
+  return vec4(((A * t1 - 5.0 * A) * t1 + 8.0 * A) * t1 - 4.0 * A,
+              ((A + 2.0) * t - (A + 3.0)) * t * t + 1.0,
+              ((A + 2.0) * t2 - (A + 3.0)) * t2 * t2 + 1.0,
+              ((A * t3 - 5.0 * A) * t3 + 8.0 * A) * t3 - 4.0 * A);
+}
+
+// fp32 -> nearest fp16 value, ties to even (the torch replicas' .half()); a 16-bit image
+// store of the result is exact whatever rounding the store conversion uses (RADV: toward zero)
+vec4 rte16(vec4 v) {
+  uvec4 u = floatBitsToUint(v);
+  u += 0xFFFu + ((u >> 13u) & 1u);
+  return uintBitsToFloat(u & ~0x1FFFu);
+}
+
+void main() {
+  ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+  if (p.x >= int(pc.inSize.x) || p.y >= int(pc.inSize.y)) return;
+  const ivec2 hi = ivec2(pc.inSize) - 1;
+  vec3 cur = texelFetch(uIn, p, 0).rgb;
+  vec3 S = sqrt(max(cur, vec3(0.0)));
+  vec3 outLin = cur;
+  if ((pc.flags & 1u) != 0u) {
+    vec2 q = vec2(p) + flowAt(p);     // position in the previous frame (pixel-index space)
+    ivec2 q0 = ivec2(floor(q));
+    vec2 fr = q - vec2(q0);
+    // gate: bilinear, coordinate clamped to the frame
+    vec2 qc = clamp(q, vec2(0.0), vec2(hi));
+    ivec2 c0 = ivec2(floor(qc));
+    vec2 cf = qc - vec2(c0);
+    ivec2 c1 = min(c0 + 1, hi);
+    float Tw = mix(mix(texelFetch(uGate, ivec2(c0.x, c0.y), 0).r, texelFetch(uGate, ivec2(c1.x, c0.y), 0).r, cf.x),
+                   mix(texelFetch(uGate, ivec2(c0.x, c1.y), 0).r, texelFetch(uGate, ivec2(c1.x, c1.y), 0).r, cf.x), cf.y);
+    if (Tw > 0.0) {
+      vec4 wx = cubicW(fr.x), wy = cubicW(fr.y);
+      vec3 hw = vec3(0.0);
+      for (int j = 0; j < 4; ++j) {
+        vec3 row = vec3(0.0);
+        for (int i = 0; i < 4; ++i)
+          row += wx[i] * texelFetch(uHist, clamp(q0 + ivec2(i - 1, j - 1), ivec2(0), hi), 0).rgb;
+        hw += wy[j] * row;
+      }
+      if (pc.ncl >= 0.0) {
+        // neighbourhood clamp: the warped history may not leave the range of
+        // the current 3x3 neighbourhood (gamma-2) by more than ncl — stops
+        // ghosts from mis-estimated motion without limiting noise averaging
+        vec3 lo = S, hi3 = S;
+        for (int j = -1; j <= 1; ++j)
+          for (int i = -1; i <= 1; ++i) {
+            vec3 sn = sqrt(max(texelFetch(uIn, clamp(p + ivec2(i, j), ivec2(0), hi), 0).rgb, vec3(0.0)));
+            lo = min(lo, sn);
+            hi3 = max(hi3, sn);
+          }
+        hw = clamp(hw, lo - pc.ncl, hi3 + pc.ncl);
+      }
+      float band = pc.kappa * Tw;
+      vec3 hc = S + clamp(hw - S, vec3(-band), vec3(band));
+      float a = 1.0 - (1.0 - pc.amin) * clamp(Tw / pc.tref, 0.0, 1.0);
+      S = a * S + (1.0 - a) * hc;
+      outLin = S * S;
+    }
+  }
+  imageStore(uFused, p, rte16(vec4(outLin, 1.0)));
+  imageStore(uHistOut, p, rte16(vec4(S, 1.0)));
+}

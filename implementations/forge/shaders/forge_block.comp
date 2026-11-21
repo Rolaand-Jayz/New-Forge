@@ -1,0 +1,198 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_EXT_control_flow_attributes : require
+// ============================================================================
+//  ANVIL — shaders/forge_block.comp   (FORGE delta net, NB fused body blocks)
+//
+//  First-party (FORGE-NEW-MODEL.md §2). One dispatch = NB consecutive Blocks
+//  of tools/forge_model.py (spec constant NB = 1..3), each fully fused:
+//     h   = DepthwiseConv3x3(x, zero pad 1) + b_dw        (32 ch)
+//     h   = Conv1x1(h, 32 -> 32) + b_pw
+//     out = ReLU(h) + x
+//  A 16x16 output tile plus an NB-pixel halo is staged in shared memory in
+//  the storage precision; intermediate block outputs stay in shared memory
+//  (ping-pong, each layer shrinking the halo by one pixel), so the feature
+//  map makes one global round trip per NB blocks.
+//  Measured on the 7900 GRE (720p, fp16 storage, 2026-11-12): NB=1, PPT=1,
+//  STAGE=true is fastest (~0.31 ms/block, ~420 GB/s effective, i.e. DRAM
+//  bound). NB>1 cuts traffic but its larger shared tile drops occupancy to 4
+//  waves/SIMD and the scalar weight-load latency then dominates (0.6-0.7
+//  ms/block); PPT>1 and STAGE=false were also slower. Kept as spec-constant
+//  knobs for other GPUs.
+//  ZERO padding at FRAME borders for every layer: off-frame texels of the
+//  staged input and of every intermediate are stored as 0 (torch semantics).
+//  All arithmetic is fp32; weights are read with dynamically uniform
+//  indices (scalar loads). Intermediates are rounded to the storage
+//  precision exactly as a global round trip would round them, so the fused
+//  and unfused paths compute identical values.
+//
+//  Bindings: 1 SSBO float wt[] (.forge payload), 2 SSBO uvec4 fout[],
+//            3 SSBO uvec4 fin[].  Storage layout: see forge_stem.comp.
+//  Push: uvec2 inSize; uvec2 outSize (unused); uint wOff = offset of the
+//        first fused block's dw.weight (per block: dw.bias +288,
+//        pw.weight +320, pw.bias +1344; blocks are 1376 floats apart).
+// ============================================================================
+layout(local_size_x_id = 2, local_size_y = 1) in;  // THREADS = 256 / PPT
+layout(constant_id = 0) const bool FP32 = false;
+layout(constant_id = 1) const uint NB = 1u;  // fused blocks (fp32 storage: 1)
+layout(constant_id = 2) const uint THREADS = 128u;  // == local_size_x
+layout(constant_id = 3) const uint PPT = 2u;        // pixels per invocation
+// STAGE=false (NB must be 1): no shared-memory tile; the 3x3 window is read
+// straight from the word-planar global buffer (cache-served; zero shared
+// memory -> occupancy bound by registers only).
+layout(constant_id = 4) const bool STAGE = true;
+const uint WORDS = FP32 ? 8u : 4u;           // uvec4 per pixel
+const uint S0 = 16u + 2u * NB;               // staged input edge
+const uint S1 = S0 - 2u;                     // first intermediate edge
+const uint B1 = S0 * S0 * WORDS;             // word offset of buffer 1
+const uint BLOCK_FLOATS = 1376u;
+
+layout(std430, set = 0, binding = 1) restrict readonly buffer Weights { float wt[]; };
+layout(std430, set = 0, binding = 2) restrict writeonly buffer FeatOut { uvec4 fout[]; };
+layout(std430, set = 0, binding = 3) restrict readonly buffer FeatIn { uvec4 fin[]; };
+
+layout(push_constant, std430) uniform Params {
+  uvec2 inSize;
+  uvec2 outSize;
+  uint wOff;
+} pc;
+
+shared uvec4 tile[STAGE ? (S0 * S0 + (NB > 1u ? S1 * S1 : 0u)) * WORDS : 1u];
+
+uint packH(float a, float b) { return packFloat2x16(f16vec2(a, b)); }
+
+// 32 channels of staged pixel t of a region with `area` pixels at word
+// offset base (word-planar: word k at base + k*area + t).
+void loadTile(uint base, uint area, uint t, out float v[32]) {
+  if (FP32) {
+    for (uint k = 0u; k < 8u; ++k) {
+      vec4 f = uintBitsToFloat(tile[base + k * area + t]);
+      v[4u * k] = f.x; v[4u * k + 1u] = f.y; v[4u * k + 2u] = f.z; v[4u * k + 3u] = f.w;
+    }
+  } else {
+    for (uint k = 0u; k < 4u; ++k) {
+      uvec4 u = tile[base + k * area + t];
+      vec2 a = vec2(unpackFloat2x16(u.x)), b = vec2(unpackFloat2x16(u.y));
+      vec2 c = vec2(unpackFloat2x16(u.z)), d = vec2(unpackFloat2x16(u.w));
+      v[8u * k] = a.x; v[8u * k + 1u] = a.y; v[8u * k + 2u] = b.x; v[8u * k + 3u] = b.y;
+      v[8u * k + 4u] = c.x; v[8u * k + 5u] = c.y; v[8u * k + 6u] = d.x; v[8u * k + 7u] = d.y;
+    }
+  }
+}
+
+bool inFrame(ivec2 q) {
+  return all(greaterThanEqual(q, ivec2(0))) && all(lessThan(q, ivec2(pc.inSize)));
+}
+
+// Word k of global pixel q (zero off-frame), word-planar.
+uvec4 globalWord(ivec2 q, uint k) {
+  return inFrame(q) ? fin[k * pc.inSize.x * pc.inSize.y + uint(q.y) * pc.inSize.x + uint(q.x)]
+                    : uvec4(0u);
+}
+
+void unpackWord(uvec4 u, uint k, inout float v[32]) {
+  if (FP32) {
+    vec4 f = uintBitsToFloat(u);
+    v[4u * k] = f.x; v[4u * k + 1u] = f.y; v[4u * k + 2u] = f.z; v[4u * k + 3u] = f.w;
+  } else {
+    vec2 a = vec2(unpackFloat2x16(u.x)), b = vec2(unpackFloat2x16(u.y));
+    vec2 c = vec2(unpackFloat2x16(u.z)), d = vec2(unpackFloat2x16(u.w));
+    v[8u * k] = a.x; v[8u * k + 1u] = a.y; v[8u * k + 2u] = b.x; v[8u * k + 3u] = b.y;
+    v[8u * k + 4u] = c.x; v[8u * k + 5u] = c.y; v[8u * k + 6u] = d.x; v[8u * k + 7u] = d.y;
+  }
+}
+void main() {
+  const ivec2 org = ivec2(gl_WorkGroupID.xy) * 16 - int(NB);  // staged origin
+  const uint lid = gl_LocalInvocationIndex;
+
+  // Stage tile + halo; consecutive invocations read consecutive words.
+  const uint npix = pc.inSize.x * pc.inSize.y;
+  if (STAGE) for (uint i = lid; i < S0 * S0 * WORDS; i += THREADS) {
+    uint k = i / (S0 * S0), t = i % (S0 * S0);
+    ivec2 q = org + ivec2(int(t % S0), int(t / S0));
+    tile[i] = inFrame(q) ? fin[k * npix + uint(q.y) * pc.inSize.x + uint(q.x)] : uvec4(0u);
+  }
+  barrier();
+
+  for (uint b = 0u; b < NB; ++b) {
+    const uint sin = S0 - 2u * b, sout = sin - 2u, n = sout * sout;
+    const uint inBase = (b & 1u) == 0u ? 0u : B1;
+    const uint outBase = (b & 1u) == 0u ? B1 : 0u;
+    const ivec2 gorg = org + int(b + 1u);  // global coord of output-region (0,0)
+    const bool last = b == NB - 1u;
+    const uint wo = pc.wOff + b * BLOCK_FLOATS;
+    // PPT output pixels per invocation (q0 + p*THREADS): every scalar weight
+    // load feeds PPT independent FMAs.
+    for (uint q0 = lid; q0 < n; q0 += THREADS * PPT) {
+      uint qs[PPT], u[PPT], v[PPT];
+      for (uint p = 0u; p < PPT; ++p) {
+        qs[p] = min(q0 + p * THREADS, n - 1u);  // tail lanes recompute pixel n-1, no store
+        u[p] = qs[p] % sout;
+        v[p] = qs[p] / sout;
+      }
+      // Depthwise 3x3: dw.weight [c][1][ky][kx] at wo + c*9 + ky*3 + kx. The
+      // tap loop is NOT unrolled so only 32 weights are live at a time (fully
+      // unrolled, ACO hoists all 1376 scalar weight loads and spills SGPRs).
+      float h[PPT][32];
+      for (uint c = 0u; c < 32u; ++c) {
+        float bias = wt[wo + 288u + c];
+        for (uint p = 0u; p < PPT; ++p) h[p][c] = bias;
+      }
+      [[dont_unroll]] for (uint t = 0u; t < 9u; ++t) {
+        const uint ky = t / 3u, kx = t % 3u;
+        float x[PPT][32];
+        for (uint p = 0u; p < PPT; ++p)
+          if (STAGE) {
+            loadTile(inBase, sin * sin, (v[p] + ky) * sin + (u[p] + kx), x[p]);
+          } else {
+            const ivec2 q = gorg + ivec2(int(u[p] + kx) - 1, int(v[p] + ky) - 1);
+            for (uint k = 0u; k < WORDS; ++k) unpackWord(globalWord(q, k), k, x[p]);
+          }
+        for (uint c = 0u; c < 32u; ++c) {
+          float w = wt[wo + c * 9u + t];
+          for (uint p = 0u; p < PPT; ++p) h[p][c] = fma(w, x[p][c], h[p][c]);
+        }
+      }
+      // Pointwise 32x32 + bias, ReLU, residual — one storage word (4 or 8
+      // output channels) per non-unrolled iteration.
+      [[dont_unroll]] for (uint k = 0u; k < WORDS; ++k) {
+        const uint CPW = 32u / WORDS;  // channels per word
+        float r[PPT][8];
+        for (uint j = 0u; j < CPW; ++j) {
+          const uint co = k * CPW + j;
+          float acc[PPT];
+          float bias = wt[wo + 1344u + co];
+          for (uint p = 0u; p < PPT; ++p) acc[p] = bias;
+          for (uint ci = 0u; ci < 32u; ++ci) {
+            float w = wt[wo + 320u + co * 32u + ci];
+            for (uint p = 0u; p < PPT; ++p) acc[p] = fma(w, h[p][ci], acc[p]);
+          }
+          for (uint p = 0u; p < PPT; ++p) r[p][j] = max(acc[p], 0.0);
+        }
+        for (uint p = 0u; p < PPT; ++p) {
+          if (q0 + p * THREADS >= n) continue;
+          const uint q = qs[p];
+          uvec4 xw = STAGE ? tile[inBase + k * sin * sin + (v[p] + 1u) * sin + (u[p] + 1u)]
+                           : globalWord(gorg + ivec2(int(u[p]), int(v[p])), k);  // residual
+          uvec4 word;
+          if (FP32) {
+            word = floatBitsToUint(vec4(r[p][0], r[p][1], r[p][2], r[p][3]) + uintBitsToFloat(xw));
+          } else {
+            vec2 a0 = vec2(unpackFloat2x16(xw.x)), a1 = vec2(unpackFloat2x16(xw.y));
+            vec2 a2 = vec2(unpackFloat2x16(xw.z)), a3 = vec2(unpackFloat2x16(xw.w));
+            word = uvec4(packH(r[p][0] + a0.x, r[p][1] + a0.y), packH(r[p][2] + a1.x, r[p][3] + a1.y),
+                         packH(r[p][4] + a2.x, r[p][5] + a2.y), packH(r[p][6] + a3.x, r[p][7] + a3.y));
+          }
+          const ivec2 g = gorg + ivec2(int(u[p]), int(v[p]));
+          const bool inside = inFrame(g);
+          if (last) {
+            if (inside) fout[k * npix + uint(g.y) * pc.inSize.x + uint(g.x)] = word;
+          } else {
+            tile[outBase + k * sout * sout + q] = inside ? word : uvec4(0u);
+          }
+        }
+      }
+    }
+    if (!last) barrier();
+  }
+}
