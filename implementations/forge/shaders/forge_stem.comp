@@ -1,0 +1,78 @@
+#version 460
+#extension GL_EXT_samplerless_texture_functions : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+// ============================================================================
+//  ANVIL — shaders/forge_stem.comp   (FORGE delta net, stem conv)
+//
+//  First-party (FORGE-NEW-MODEL.md §2). Implements ForgeDeltaNet.stem of
+//  tools/forge_model.py on the player's linear rgba16f working image:
+//     x   = srgb_encode(clamp(in.rgb, 0, 1)) - 0.5        (network input)
+//     out = ReLU(Conv2d(3 -> 32, 3x3, ZERO padding 1, + bias)(x))
+//  Zero padding is applied to x (the conv input), i.e. off-frame taps are 0,
+//  matching torch.  fp32 math; result stored to the feature buffer.
+//
+//  Bindings (shared ForgeStage set layout; unused ones not declared):
+//    0 texture2D uIn            linear rgba16f, inSize
+//    1 SSBO float wt[]          .forge payload (fp32, canonical order)
+//    2 SSBO uvec4 fout[]        feature map (layout below)
+//  Feature storage (spec constant FP32), WORD-PLANAR: word k of pixel p
+//  (p = y*W + x) is fout[k*W*H + p], so a wave touches contiguous 16-byte
+//  words (coalesced global access, conflict-free shared memory):
+//    false: 4 words/pixel, 8 fp16 per uvec4 (ch 8k..8k+7, low half first)
+//    true : 8 words/pixel, 4 fp32 per uvec4 (ch 4k..4k+3)
+//  Push: uvec2 inSize; uvec2 outSize; uint wOff (stem.weight offset; bias at
+//  wOff + 864).
+// ============================================================================
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(constant_id = 0) const bool FP32 = false;
+
+layout(set = 0, binding = 0) uniform texture2D uIn;
+layout(std430, set = 0, binding = 1) restrict readonly buffer Weights { float wt[]; };
+layout(std430, set = 0, binding = 2) restrict writeonly buffer FeatOut { uvec4 fout[]; };
+
+layout(push_constant, std430) uniform Params {
+  uvec2 inSize;
+  uvec2 outSize;
+  uint wOff;
+} pc;
+
+float srgbEncode(float v) {
+  v = clamp(v, 0.0, 1.0);
+  return v <= 0.0031308 ? 12.92 * v : 1.055 * pow(v, 1.0 / 2.4) - 0.055;
+}
+
+uint packH(float a, float b) { return packFloat2x16(f16vec2(a, b)); }
+
+void main() {
+  ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+  if (p.x >= int(pc.inSize.x) || p.y >= int(pc.inSize.y)) return;
+
+  // xin[ci*9 + ky*3 + kx] — torch weight layout [co][ci][ky][kx]
+  float xin[27];
+  for (int ky = 0; ky < 3; ++ky) {
+    for (int kx = 0; kx < 3; ++kx) {
+      ivec2 q = p + ivec2(kx - 1, ky - 1);
+      bool inside = all(greaterThanEqual(q, ivec2(0))) && all(lessThan(q, ivec2(pc.inSize)));
+      vec3 c = inside ? texelFetch(uIn, q, 0).rgb : vec3(0.0);
+      for (int ci = 0; ci < 3; ++ci)
+        xin[ci * 9 + ky * 3 + kx] = inside ? srgbEncode(c[ci]) - 0.5 : 0.0;
+    }
+  }
+
+  float o[32];
+  for (int co = 0; co < 32; ++co) {
+    float acc = wt[pc.wOff + 864u + uint(co)];
+    for (int k = 0; k < 27; ++k) acc = fma(wt[pc.wOff + uint(co * 27 + k)], xin[k], acc);
+    o[co] = max(acc, 0.0);
+  }
+
+  uint pix = uint(p.y) * pc.inSize.x + uint(p.x), npix = pc.inSize.x * pc.inSize.y;
+  if (FP32) {
+    for (int k = 0; k < 8; ++k)
+      fout[uint(k) * npix + pix] = floatBitsToUint(vec4(o[4 * k], o[4 * k + 1], o[4 * k + 2], o[4 * k + 3]));
+  } else {
+    for (int k = 0; k < 4; ++k)
+      fout[uint(k) * npix + pix] = uvec4(packH(o[8 * k], o[8 * k + 1]), packH(o[8 * k + 2], o[8 * k + 3]),
+                                       packH(o[8 * k + 4], o[8 * k + 5]), packH(o[8 * k + 6], o[8 * k + 7]));
+  }
+}

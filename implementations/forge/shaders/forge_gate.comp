@@ -1,0 +1,92 @@
+#version 460
+#extension GL_EXT_samplerless_texture_functions : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+// ============================================================================
+//  ANVIL — shaders/forge_gate.comp   (FORGE temporal path: gate capture)
+//
+//  First-party. Captures, during the spatial pass, the noise gate T the net
+//  computes mid-way (a feature channel that is recycled later in the net) for
+//  the NEXT frame's fusion (one invocation per input pixel p):
+//     gate(p) = max( gScale * max over 3x3 of feat[gSlot],
+//                    hold * gate_prev(p + flow(p)) )        (bilinear)
+//  The hold term keeps a pixel in the temporal path while it converges: once
+//  fused, a pixel looks cleaner to the net, and without the hold it would
+//  drop out and flicker back. With no valid history (flags bit 0 clear) the
+//  hold term is skipped. Values below tdead are stored as 0: without that the
+//  geometric hold never reaches zero and the gate creeps over clean content.
+//  Must run right after the block that writes T.
+//
+//  Bindings: 17 SSBO uvec4 fgate[] (feature buffer holding T), 7 texture
+//            flow, 8 texture gate (prev), 16 r16f gate (write).
+// ============================================================================
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(constant_id = 0) const bool FP32 = false;
+
+layout(std430, set = 0, binding = 17) restrict readonly buffer FeatGate { uvec4 fgate[]; };
+layout(set = 0, binding = 7) uniform sampler2D uFlow;
+layout(set = 0, binding = 8) uniform sampler2D uGate;
+layout(r16f, set = 0, binding = 16) uniform writeonly image2D uGateOut;
+
+layout(push_constant, std430) uniform Params {
+  uvec2 inSize;
+  uvec2 outSize;
+  uint wOff;
+  uint flags;
+  float kappa, amin, tref;
+  uint gSlot;
+  float gScale;
+  float hold;
+  float ncl;    // forge_fuse only
+  float tdead;  // stored gate below this snaps to 0 (ends the hold tail)
+} pc;
+
+float featT(ivec2 q) {
+  q = clamp(q, ivec2(0), ivec2(pc.inSize) - 1);
+  uint pix = uint(q.y) * pc.inSize.x + uint(q.x), npix = pc.inSize.x * pc.inSize.y;
+  if (FP32) {
+    return uintBitsToFloat(fgate[(pc.gSlot >> 2) * npix + pix][pc.gSlot & 3u]);
+  } else {
+    uint w = fgate[(pc.gSlot >> 3) * npix + pix][(pc.gSlot & 7u) >> 1];
+    return float(unpackFloat2x16(w)[pc.gSlot & 1u]);
+  }
+}
+
+vec2 flowAt(ivec2 p) {
+  ivec2 g = ivec2(pc.inSize) / 8;
+  vec2 s = (vec2(p) + 0.5) / 8.0 - 0.5;
+  ivec2 i0 = ivec2(floor(s));
+  vec2 fr = s - vec2(i0);
+  ivec2 a = clamp(i0, ivec2(0), g - 1), b = clamp(i0 + 1, ivec2(0), g - 1);
+  vec2 f00 = texelFetch(uFlow, ivec2(a.x, a.y), 0).rg, f10 = texelFetch(uFlow, ivec2(b.x, a.y), 0).rg;
+  vec2 f01 = texelFetch(uFlow, ivec2(a.x, b.y), 0).rg, f11 = texelFetch(uFlow, ivec2(b.x, b.y), 0).rg;
+  return mix(mix(f00, f10, fr.x), mix(f01, f11, fr.x), fr.y);
+}
+
+// fp32 -> nearest fp16 value, ties to even (the torch replicas' .half()); a 16-bit image
+// store of the result is exact whatever rounding the store conversion uses (RADV: toward zero)
+vec4 rte16(vec4 v) {
+  uvec4 u = floatBitsToUint(v);
+  u += 0xFFFu + ((u >> 13u) & 1u);
+  return uintBitsToFloat(u & ~0x1FFFu);
+}
+
+void main() {
+  ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+  if (p.x >= int(pc.inSize.x) || p.y >= int(pc.inSize.y)) return;
+  float t = 0.0;
+  for (int j = -1; j <= 1; ++j)
+    for (int i = -1; i <= 1; ++i) t = max(t, featT(p + ivec2(i, j)));
+  t *= pc.gScale;
+  if ((pc.flags & 1u) != 0u && pc.hold > 0.0) {
+    const ivec2 hi = ivec2(pc.inSize) - 1;
+    vec2 qc = clamp(vec2(p) + flowAt(p), vec2(0.0), vec2(hi));
+    ivec2 c0 = ivec2(floor(qc));
+    vec2 cf = qc - vec2(c0);
+    ivec2 c1 = min(c0 + 1, hi);
+    float tw = mix(mix(texelFetch(uGate, ivec2(c0.x, c0.y), 0).r, texelFetch(uGate, ivec2(c1.x, c0.y), 0).r, cf.x),
+                   mix(texelFetch(uGate, ivec2(c0.x, c1.y), 0).r, texelFetch(uGate, ivec2(c1.x, c1.y), 0).r, cf.x), cf.y);
+    t = max(t, pc.hold * tw);
+  }
+  if (t < pc.tdead) t = 0.0;
+  imageStore(uGateOut, p, rte16(vec4(t)));
+}
