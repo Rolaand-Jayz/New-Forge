@@ -1,0 +1,165 @@
+#version 460
+#extension GL_EXT_samplerless_texture_functions : require
+// ============================================================================
+//  ANVIL — shaders/chroma_guided.comp   (reprojection-checked guided chroma)
+//
+//  4:2:0 -> 4:4:4 chroma for the FORGE front end (temporal study 2026-11-16,
+//  .scratch/forge/temporal-study/PLAN.md §1). Replaces the bilinear chroma
+//  of yuv_to_rgb.comp: Player runs the five modes below and binds the full-
+//  resolution result (in the SAME sampled-value domain as the chroma plane)
+//  where yuv_to_rgb.comp would otherwise sample the half-resolution plane.
+//
+//  All maths in the normalized code domain (luma (y-16/255)*255/219, chroma
+//  (c-0.5)*255/224 for limited range), centre-sited chroma, clamp-to-edge:
+//    I      = 2x2 mean of luma on the chroma grid
+//    (a,b)  = guided-filter fit p ~ a*I + b over 3x3 (eps), then 3x3 mean
+//    q(x)   = bilinear(a)(x) * Y(x) + bilinear(b)(x)          (luma grid)
+//    d      = p - mean of q over the chroma pixel's 4 luma pixels
+//    w      = clamp(1 - |3x3 mean of d| / tau, 0, 1)
+//    out(x) = bilinear(w)(x) * q(x) + (1 - bilinear(w)(x)) * lanczos3_2x(p)(x)
+//  Torch reference: tools/forge_player_io.guided_chroma (parity gate).
+//
+//  Modes (push.mode): 0 coefficients -> A, 1 smooth A -> B, 2 residual -> D,
+//  3 weight -> W (all chroma grid), 4 compose -> Out (luma grid).
+// ============================================================================
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform texture2D uY;
+layout(set = 0, binding = 1) uniform texture2D uC;
+layout(rgba32f, set = 0, binding = 2) uniform image2D imgA;
+layout(rgba32f, set = 0, binding = 3) uniform image2D imgB;
+layout(rg32f, set = 0, binding = 4) uniform image2D imgD;
+layout(rg32f, set = 0, binding = 5) uniform image2D imgW;
+layout(rg32f, set = 0, binding = 6) uniform writeonly image2D imgOut;
+
+layout(push_constant, std430) uniform PC {
+  uvec2 lumaSize;
+  uvec2 chromaSize;
+  int yuvLayout;  // 0 = 8-bit, 1 = p010 (10-bit in the high bits of u16)
+  int rangeFull;  // 0 = limited, 1 = full
+  uint mode;
+  float tau;
+  float eps;
+} pc;
+
+float rawScale() { return pc.yuvLayout == 1 ? 65535.0 / 64.0 / 1023.0 : 1.0; }
+
+float lumaN(ivec2 p) {
+  p = clamp(p, ivec2(0), ivec2(pc.lumaSize) - 1);
+  float y = texelFetch(uY, p, 0).r * rawScale();
+  return pc.rangeFull == 0 ? (y - 16.0 / 255.0) * (255.0 / 219.0) : y;
+}
+vec2 chromaN(ivec2 p) {
+  p = clamp(p, ivec2(0), ivec2(pc.chromaSize) - 1);
+  vec2 c = texelFetch(uC, p, 0).rg * rawScale() - 0.5;
+  return pc.rangeFull == 0 ? c * (255.0 / 224.0) : c;
+}
+float lumaI(ivec2 c) {  // 2x2 luma mean at (clamped) chroma pixel c
+  c = clamp(c, ivec2(0), ivec2(pc.chromaSize) - 1);
+  ivec2 b = 2 * c;
+  return 0.25 * (lumaN(b) + lumaN(b + ivec2(1, 0)) + lumaN(b + ivec2(0, 1)) + lumaN(b + ivec2(1, 1)));
+}
+ivec2 cclamp(ivec2 p) { return clamp(p, ivec2(0), ivec2(pc.chromaSize) - 1); }
+
+// bilinear on the chroma grid at luma pixel x (centre-sited, clamped coordinate:
+// F.interpolate / grid_sample(border) with align_corners=False)
+void bilin(ivec2 x, out ivec2 i0, out ivec2 i1, out vec2 f) {
+  vec2 u = (vec2(x) + 0.5) * 0.5 - 0.5;
+  u = clamp(u, vec2(0.0), vec2(pc.chromaSize) - 1.0);
+  vec2 fl = floor(u);
+  i0 = ivec2(fl);
+  i1 = min(i0 + 1, ivec2(pc.chromaSize) - 1);
+  f = u - fl;
+}
+vec4 bilB(ivec2 x) {
+  ivec2 i0, i1; vec2 f;
+  bilin(x, i0, i1, f);
+  vec4 a = imageLoad(imgB, i0), b = imageLoad(imgB, ivec2(i1.x, i0.y));
+  vec4 c = imageLoad(imgB, ivec2(i0.x, i1.y)), d = imageLoad(imgB, i1);
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+vec2 bilW(ivec2 x) {
+  ivec2 i0, i1; vec2 f;
+  bilin(x, i0, i1, f);
+  vec2 a = imageLoad(imgW, i0).xy, b = imageLoad(imgW, ivec2(i1.x, i0.y)).xy;
+  vec2 c = imageLoad(imgW, ivec2(i0.x, i1.y)).xy, d = imageLoad(imgW, i1).xy;
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+vec2 guidedQ(ivec2 x) {  // (cb, cr) guided prediction at luma pixel x
+  vec4 ab = bilB(x);
+  float y = lumaN(x);
+  return vec2(ab.x * y + ab.y, ab.z * y + ab.w);
+}
+
+float wL3(float t) {
+  t = abs(t);
+  if (t < 1e-8) return 1.0;
+  if (t >= 3.0) return 0.0;
+  float pt = 3.14159265358979 * t;
+  return 3.0 * sin(pt) * sin(pt / 3.0) / (pt * pt);
+}
+
+void main() {
+  ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+  if (pc.mode < 4u) {
+    if (p.x >= int(pc.chromaSize.x) || p.y >= int(pc.chromaSize.y)) return;
+  } else if (p.x >= int(pc.lumaSize.x) || p.y >= int(pc.lumaSize.y)) {
+    return;
+  }
+
+  if (pc.mode == 0u) {
+    float mI = 0.0, mII = 0.0;
+    vec2 mP = vec2(0.0), mIP = vec2(0.0);
+    for (int dy = -1; dy <= 1; ++dy)
+      for (int dx = -1; dx <= 1; ++dx) {
+        ivec2 q = cclamp(p + ivec2(dx, dy));
+        float I = lumaI(q);
+        vec2 c = chromaN(q);
+        mI += I; mII += I * I; mP += c; mIP += I * c;
+      }
+    mI /= 9.0; mII /= 9.0; mP /= 9.0; mIP /= 9.0;
+    float vI = mII - mI * mI;
+    vec2 cov = mIP - mI * mP;
+    vec2 a = cov / (vI + pc.eps);
+    vec2 b = mP - a * mI;
+    imageStore(imgA, p, vec4(a.x, b.x, a.y, b.y));
+  } else if (pc.mode == 1u) {
+    vec4 s = vec4(0.0);
+    for (int dy = -1; dy <= 1; ++dy)
+      for (int dx = -1; dx <= 1; ++dx) s += imageLoad(imgA, cclamp(p + ivec2(dx, dy)));
+    imageStore(imgB, p, s / 9.0);
+  } else if (pc.mode == 2u) {
+    ivec2 b = 2 * p;
+    vec2 m = 0.25 * (guidedQ(b) + guidedQ(b + ivec2(1, 0)) + guidedQ(b + ivec2(0, 1)) + guidedQ(b + ivec2(1, 1)));
+    imageStore(imgD, p, vec4(chromaN(p) - m, 0.0, 0.0));
+  } else if (pc.mode == 3u) {
+    vec2 s = vec2(0.0);
+    for (int dy = -1; dy <= 1; ++dy)
+      for (int dx = -1; dx <= 1; ++dx) s += imageLoad(imgD, cclamp(p + ivec2(dx, dy))).xy;
+    vec2 w = clamp(1.0 - abs(s / 9.0) / pc.tau, 0.0, 1.0);
+    imageStore(imgW, p, vec4(w, 0.0, 0.0));
+  } else {
+    // lanczos3 2x of the chroma plane (forge_lanczos.lanczos3 conventions)
+    vec2 s = (vec2(p) + 0.5) * 0.5 - 0.5;
+    vec2 fl = floor(s);
+    float wx[6], wy[6], sx = 0.0, sy = 0.0;
+    for (int t = 0; t < 6; ++t) {
+      wx[t] = wL3(s.x - (fl.x + float(t - 2)));
+      wy[t] = wL3(s.y - (fl.y + float(t - 2)));
+      sx += wx[t]; sy += wy[t];
+    }
+    vec2 l = vec2(0.0);
+    for (int ty = 0; ty < 6; ++ty) {
+      vec2 h = vec2(0.0);
+      for (int tx = 0; tx < 6; ++tx) h += wx[tx] * chromaN(ivec2(fl) + ivec2(tx - 2, ty - 2));
+      l += wy[ty] * (h / sx);
+    }
+    l /= sy;
+    vec2 w = bilW(p);
+    vec2 c = w * guidedQ(p) + (1.0 - w) * l;
+    // back to the sampled-value domain yuv_to_rgb.comp expects
+    if (pc.rangeFull == 0) c *= 224.0 / 255.0;
+    c = (c + 0.5) / rawScale();
+    imageStore(imgOut, p, vec4(c, 0.0, 0.0));
+  }
+}

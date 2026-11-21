@@ -2,6 +2,11 @@
 
 Notable changes to the project record. Dates are UTC.
 
+## 2026-11-21
+
+- **Code:** published the FORGE implementation from ANVIL commit `41ba911` under `implementations/forge/`: GPU shaders, the host-side stage, the PyTorch replica, the weight constructor, the default weights, and the gate scripts with their original outputs and input checksums. Labeled as implementation evidence, not a selected architecture. FSR-derived material is excluded.
+- **Results:** the FORGE record links the published code and outputs, and adds the Sintel cave scene (part of the tuning set, so not held out).
+
 ## 2026-11-19
 
 - **Results:** independent re-run reproduces the whole-frame means exactly; added tile-level figures, including the worst tile, which shows likely temporal ghosting on noisy input (observation, not root-caused).

@@ -1,0 +1,150 @@
+#version 460
+// ============================================================================
+//  ANVIL — shaders/forge_bp.comp   (FORGE noise-gated back-projection)
+//
+//  Runs after forge_tail.comp when the temporal path is on (temporal study
+//  2026-11-16, .scratch/forge/temporal-study/PLAN.md §6, variant pt_sbp).
+//  The net's 4K output is pushed toward consistency with the LR frame it was
+//  computed from, in the code domain the content was downscaled in, and
+//  faded out where the net's own noise gate says the LR frame is noise:
+//     Q    = enc(out)                                        (4K)
+//     r    = enc(fused) - down3(Q)                           (LR, pass 0)
+//     g    = clamp(1 - T / tref, 0, 1)                       (LR, pass 0)
+//     out' = dec(Q + beta * bilinear_up(g) * lanczos3_up(r)) (4K, pass 1)
+//  down3 = lanczos3 x1/3, 17 taps, LR pixel i centred on HR 3i+1, clamp-to-
+//  edge, horizontal then vertical. lanczos3_up = forge_tail.comp's base
+//  kernel (scaler.comp mode 2 conventions); bilinear_up = align_corners=False
+//  with the source coordinate clamped at 0 (torch F.interpolate).
+//  Torch reference: tools/forge_player_io.back_project (parity gate).
+//
+//  Bindings (own set): 0 rgba16f fused LR (linear), 1 r16f stored gate T
+//  (LR), 2 rgba16f stage output (4K, read + write), 3 rgba32f residual (LR).
+//  Spec constant 0 = pass (0 down/residual, 1 up/apply). Push: inSize,
+//  outSize (= 3 * inSize), pad, flags (bit 1 BT.709 code,
+//  bit 2 sRGB code), beta, tref.
+// ============================================================================
+layout(local_size_x_id = 1, local_size_y_id = 2) in;  // pass 0 8x8, pass 1 16x16
+layout(constant_id = 0) const uint MODE = 0u;  // one pipeline per pass (own LDS budget)
+
+layout(rgba16f, set = 0, binding = 0) uniform readonly image2D uFused;
+layout(r16f, set = 0, binding = 1) uniform readonly image2D uGate;
+layout(rgba16f, set = 0, binding = 2) uniform image2D uOut;
+layout(rgba32f, set = 0, binding = 3) uniform image2D uRes;
+
+layout(push_constant, std430) uniform Params {
+  uvec2 inSize;
+  uvec2 outSize;
+  uint pad;
+  uint flags;
+  float beta;
+  float tref;
+} pc;
+
+vec3 enc(vec3 l) {
+  vec3 c = clamp(l, 0.0, 1.0);
+  if ((pc.flags & 4u) != 0u)
+    return mix(12.92 * c, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, greaterThan(c, vec3(0.0031308)));
+  return mix(4.5 * c, 1.099 * pow(max(c, vec3(1e-12)), vec3(0.45)) - 0.099, greaterThanEqual(c, vec3(0.018)));
+}
+vec3 dec(vec3 p) {
+  p = clamp(p, 0.0, 1.0);
+  if ((pc.flags & 4u) != 0u)
+    return mix(p / 12.92, pow((p + 0.055) / 1.055, vec3(2.4)), greaterThan(p, vec3(0.04045)));
+  return mix(p / 4.5, pow((p + 0.099) / 1.099, vec3(1.0 / 0.45)), greaterThanEqual(p, vec3(0.081)));
+}
+
+// fp32 -> nearest fp16 value, ties to even (torch .half()); storing the result to a
+// 16-bit image is then exact whatever rounding the conversion uses (AMD: toward zero)
+vec3 rte16(vec3 v) {
+  uvec3 u = floatBitsToUint(v);
+  u += 0xFFFu + ((u >> 13u) & 1u);
+  return uintBitsToFloat(u & ~0x1FFFu);
+}
+
+float wL3(float t) {
+  t = abs(t);
+  if (t < 1e-5) return 1.0;
+  if (t >= 3.0) return 0.0;
+  float pt = 3.14159265358979 * t;
+  return 3.0 * sin(pt) * sin(pt / 3.0) / (pt * pt);
+}
+
+// Exactly-3x lanczos3 constants (outSize == 3 * inSize, so every output phase is one of
+// three): UPW[j*6+t] = normalized weight of source tap t for output phase j (base offset
+// UPB[j] from the LR pixel); DNW = normalized 17-tap x1/3 kernel. Values = wL3() in double.
+const float UPW[18] = float[18](1.271680500e-02, -9.373844646e-02, 3.823964103e-01, 8.138755202e-01, -1.464663226e-01, 3.121603349e-02, -1.611881078e-17, 3.223762156e-17, 1.000000000e+00, 3.223762156e-17, -1.611881078e-17, 0.000000000e+00, 3.121603349e-02, -1.464663226e-01, 8.138755202e-01, 3.823964103e-01, -9.373844646e-02, 1.271680500e-02);
+const int UPB[3] = int[3](-3, -2, -2);
+const float DNW[17] = float[17](4.232710884e-03, 1.039006611e-02, -5.388715320e-18, -3.120026944e-02, -4.875042100e-02, 1.077743064e-17, 1.272783099e-01, 2.708934966e-01, 3.343122141e-01, 2.708934966e-01, 1.272783099e-01, 1.077743064e-17, -4.875042100e-02, -3.120026944e-02, -5.388715320e-18, 1.039006611e-02, 4.232710884e-03);
+
+// pass 0: 8x8 LR outputs need HR [3o-7, 3o+30] -> 38x38 encoded texels
+const int HT = 38;
+shared vec3 hrT[HT * HT];
+shared vec3 hsum[HT * 8];
+// pass 1: 16x16 residual texels (origin -4), as forge_tail.comp
+const int LT = 16;
+shared vec4 resT[LT * LT];
+
+void downPass() {
+  const ivec2 o = ivec2(gl_WorkGroupID.xy) * 8;
+  const ivec2 h0 = 3 * o - 7;
+  const ivec2 hiHR = ivec2(pc.outSize) - 1;
+  const uint lid = gl_LocalInvocationIndex;
+  for (uint i = lid; i < uint(HT * HT); i += 64u) {
+    ivec2 q = clamp(h0 + ivec2(int(i) % HT, int(i) / HT), ivec2(0), hiHR);
+    hrT[i] = enc(imageLoad(uOut, q).rgb);
+  }
+  barrier();
+  for (uint i = lid; i < uint(HT * 8); i += 64u) {
+    int r = int(i) / 8, c = int(i) % 8;
+    vec3 a = vec3(0.0);
+    for (int t = 0; t < 17; ++t) a += DNW[t] * hrT[r * HT + 3 * c + t];
+    hsum[i] = a;
+  }
+  barrier();
+  ivec2 l = ivec2(gl_LocalInvocationID.xy), p = o + l;
+  if (p.x >= int(pc.inSize.x) || p.y >= int(pc.inSize.y)) return;
+  vec3 d = vec3(0.0);
+  for (int t = 0; t < 17; ++t) d += DNW[t] * hsum[(3 * l.y + t) * 8 + l.x];
+  vec3 r = enc(imageLoad(uFused, p).rgb) - d;
+  float g = clamp(1.0 - imageLoad(uGate, p).r / pc.tref, 0.0, 1.0);
+  imageStore(uRes, p, vec4(r, g));
+}
+
+vec2 dstToSrc(vec2 d) { return (d + 0.5) * (vec2(pc.inSize) / vec2(pc.outSize)) - 0.5; }
+
+// Per-output-pixel 3x up: 16x16 threads = 16x16 output pixels; the 13x13 LR texels they
+// touch are staged once. Same tap order as before (6 horizontal sums, then vertical).
+const int UT = 13;
+shared vec4 upT[UT * UT];
+
+void upPass() {
+  const ivec2 o = ivec2(gl_WorkGroupID.xy) * 16, lo = o / 3 - 3, hiLR = ivec2(pc.inSize) - 1;
+  const uint lid = gl_LocalInvocationIndex;
+  for (uint i = lid; i < uint(UT * UT); i += 256u)
+    upT[i] = imageLoad(uRes, clamp(lo + ivec2(int(i) % UT, int(i) / UT), ivec2(0), hiLR));
+  barrier();
+  ivec2 dst = o + ivec2(gl_LocalInvocationID.xy);
+  if (dst.x >= int(pc.outSize.x) || dst.y >= int(pc.outSize.y)) return;
+  ivec2 p = dst / 3, j = dst - 3 * p;
+  vec3 up = vec3(0.0);
+  for (int jj = 0; jj < 6; ++jj) {
+    int ty = p.y + UPB[j.y] + jj - lo.y;
+    vec3 a = vec3(0.0);
+    for (int ii = 0; ii < 6; ++ii) a += UPW[j.x * 6 + ii] * upT[ty * UT + p.x + UPB[j.x] + ii - lo.x].rgb;
+    up += UPW[j.y * 6 + jj] * a;
+  }
+  // gate, bilinear (all four taps are inside the staged tile)
+  vec2 b = max(dstToSrc(vec2(dst)), vec2(0.0));
+  ivec2 b0 = ivec2(floor(b)), b1 = min(b0 + 1, hiLR);
+  vec2 bf = b - vec2(b0);
+  ivec2 t0 = b0 - lo, t1 = b1 - lo;
+  float g = mix(mix(upT[t0.y * UT + t0.x].a, upT[t0.y * UT + t1.x].a, bf.x),
+                mix(upT[t1.y * UT + t0.x].a, upT[t1.y * UT + t1.x].a, bf.x), bf.y);
+  vec3 q = enc(imageLoad(uOut, dst).rgb);
+  imageStore(uOut, dst, vec4(rte16(dec(q + pc.beta * g * up)), 1.0));
+}
+
+void main() {
+  if (MODE == 0u) downPass();
+  else upPass();
+}

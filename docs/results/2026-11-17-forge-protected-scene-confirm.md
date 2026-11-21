@@ -11,6 +11,8 @@ Since the 2026-09-16 status snapshot, implementation work has run in **ANVIL**, 
 
 The ANVIL code is private. This record publishes the measurements and their limits, not the code. It is evidence for this repository's open questions; it does not declare New Forge's production architecture.
 
+> **Update 2026-11-21: code published.** The FORGE code from ANVIL commit `41ba911` (GPU shaders, the host-side stage, the PyTorch replica, the weight constructor, and the default weights) and the gate scripts with their original outputs are now public under [`implementations/forge/`](../../implementations/forge/README.md). The rest of the ANVIL player stays private. The text of this record below is unchanged except for item 7 and the added "Supplementary scene" section.
+
 ## Evidence chain (per `evaluation/EVIDENCE_STANDARD.md`)
 
 1. **Claim tested.** FORGE as built improves fidelity over lanczos3 alone on held-out scenes without regressing clean content. This is the F-QUALITY gate, recorded on 2026-11-07, before any tuning:
@@ -25,7 +27,7 @@ The ANVIL code is private. This record publishes the measurements and their limi
 4. **Controlled variable.** The FORGE stage versus lanczos3 alone on the same frames. Lanczos3 is also the output of the zero-initialized model, so it is the floor by construction.
 5. **Baselines.** Lanczos3 alone; the spatial-only FORGE model; the 2026-11-15 player.
 6. **Configuration.** Front end, temporal path, back-projection, and 4K accumulation all on; 19-frame warm-up. Measured on a replica of the player that is parity-checked against GPU captures (see item 10).
-7. **Artifacts and logs.** Held in the private repository (`gate_confirm.json`, `spatial_protected.json`, per-scene logs).
+7. **Artifacts and logs.** Held in the private repository (`gate_confirm.json`, `spatial_protected.json`, per-scene logs). *Since 2026-11-21:* published unchanged in [`implementations/forge/gate/results-2026-11-17/`](../../implementations/forge/gate/results-2026-11-17/), with the scripts that wrote them in [`implementations/forge/gate/`](../../implementations/forge/gate/) and input checksums in `gate/INPUTS.sha256`.
 8. **Quality metrics** (measured fact; dB over lanczos3, PSNR against ground truth):
 
    | Arm | Spatial model | 2026-11-15 player | **2026-11-17 player** |
@@ -76,6 +78,22 @@ Whole-frame means over lanczos3 match the table above exactly: **+0.585 dB** (cl
 **Observation, not root-caused.** In the worst tile, FORGE places a moving object where it was earlier rather than where it is now. This looks like stale temporal history (ghosting). A fainter dark smear is visible beside the post in the gain figure as well.
 
 **Hypothesis.** History fusion on noisy input (used on 98–99.5% of pixels, see item 10) is not rejecting regions with motion or disocclusion. This should be tested against the noisy-arm F-TEMPORAL failure.
+
+## Supplementary scene: Sintel cave (added 2026-11-21)
+
+**Measured fact.** The same protocol was run on `sintel_cave`, frames 72/120/168. The outputs were in the private repository and are published with the code (`cave_confirm.json`, `sintel_cave_crf23a.json`).
+
+**Not held out.** `sintel_cave` is part of the temporal tuning set (`tools/forge_tdev.py`), so these numbers are not evidence of generalization. They are recorded so the published outputs are not selectively reported.
+
+| Arm | dB over lanczos3 | M2 flicker, FORGE vs lanczos3 |
+|---|---|---|
+| Clean (CRF 10) | +0.450 | 0.0699 vs 0.0707 (pass) |
+| CRF 23, corpus clips (shifted ruler) | +0.029 | 0.0709 vs 0.0716 (pass) |
+| CRF 23, aligned clips | +0.239 | 0.0712 vs 0.0720 (pass) |
+| CRF 27 | +0.150 | 0.0708 vs 0.0718 (pass) |
+| Noisy | +5.988 | 0.0677 vs 0.0542 (**fail**) |
+
+The pattern matches the protected scenes: the shifted CRF 23 clips understate the gain, and flicker fails on noisy input.
 
 ## What this record does not establish
 

@@ -1,0 +1,33 @@
+clean  sintel_rooftop  f72  old +0.065  fe +0.434  bp +0.633  acc +0.778  | M2 lanczos 0.0557 old 0.0547 fe 0.0542 bp 0.0543 acc 0.0547
+clean  sintel_rooftop  f120 old +0.076  fe +0.445  bp +0.647  acc +0.789  | M2 lanczos 0.0581 old 0.0570 fe 0.0564 bp 0.0566 acc 0.0569
+clean  sintel_rooftop  f168 old +0.107  fe +0.575  bp +0.799  acc +1.036  | M2 lanczos 0.1156 old 0.1132 fe 0.1125 bp 0.1127 acc 0.1134
+clean  tos_daylight    f72  old +0.012  fe +0.102  bp +0.223  acc +0.392  | M2 lanczos 0.0275 old 0.0271 fe 0.0271 bp 0.0276 acc 0.0283
+clean  tos_daylight    f120 old +0.008  fe +0.102  bp +0.182  acc +0.291  | M2 lanczos 0.0575 old 0.0570 fe 0.0571 bp 0.0566 acc 0.0570
+clean  tos_daylight    f168 old +0.014  fe +0.110  bp +0.190  acc +0.301  | M2 lanczos 0.0601 old 0.0595 fe 0.0597 bp 0.0592 acc 0.0594
+clean  tos_debris      f72  old +0.008  fe +0.268  bp +0.285  acc +0.339  | M2 lanczos 0.1333 old 0.1333 fe 0.1333 bp 0.1330 acc 0.1333
+clean  tos_debris      f120 old +0.007  fe +0.253  bp +0.268  acc +0.340  | M2 lanczos 0.1006 old 0.1006 fe 0.1006 bp 0.0999 acc 0.1002
+clean  tos_debris      f168 old +0.186  fe +0.294  bp +0.702  acc +1.003  | M2 lanczos 0.0236 old 0.0233 fe 0.0229 bp 0.0235 acc 0.0241
+crf23  sintel_rooftop  f72  old +0.048  fe +0.129  bp +0.055  acc +0.052  | M2 lanczos 0.0543 old 0.0534 fe 0.0530 bp 0.0529 acc 0.0533
+crf23  sintel_rooftop  f120 old +0.049  fe +0.144  bp +0.065  acc +0.061  | M2 lanczos 0.0560 old 0.0550 fe 0.0547 bp 0.0545 acc 0.0549
+crf23  sintel_rooftop  f168 old +0.046  fe +0.020  bp -0.047  acc -0.052  | M2 lanczos 0.1150 old 0.1129 fe 0.1127 bp 0.1118 acc 0.1120
+crf23  tos_daylight    f72  old +0.024  fe -0.020  bp -0.048  acc -0.044  | M2 lanczos 0.0270 old 0.0268 fe 0.0268 bp 0.0267 acc 0.0271
+crf23  tos_daylight    f120 old +0.018  fe -0.038  bp -0.067  acc -0.056  | M2 lanczos 0.0578 old 0.0574 fe 0.0576 bp 0.0570 acc 0.0571
+crf23  tos_daylight    f168 old +0.020  fe -0.038  bp -0.065  acc -0.060  | M2 lanczos 0.0599 old 0.0594 fe 0.0597 bp 0.0589 acc 0.0590
+crf23  tos_debris      f72  old +0.011  fe -0.112  bp -0.122  acc -0.108  | M2 lanczos 0.1345 old 0.1343 fe 0.1344 bp 0.1339 acc 0.1338
+crf23  tos_debris      f120 old +0.011  fe -0.106  bp -0.127  acc -0.107  | M2 lanczos 0.1005 old 0.1006 fe 0.1005 bp 0.0996 acc 0.0991
+crf23  tos_debris      f168 old +0.075  fe +0.124  bp +0.047  acc +0.044  | M2 lanczos 0.0223 old 0.0220 fe 0.0218 bp 0.0220 acc 0.0227
+noisy  sintel_rooftop  f72  old +3.661  fe +4.632  bp +4.509  acc +4.532  | M2 lanczos 0.0594 old 0.0604 fe 0.0596 bp 0.0611 acc 0.0615
+noisy  sintel_rooftop  f120 old +3.613  fe +4.560  bp +4.435  acc +4.458  | M2 lanczos 0.0611 old 0.0623 fe 0.0613 bp 0.0628 acc 0.0633
+noisy  sintel_rooftop  f168 old +3.403  fe +3.868  bp +3.871  acc +3.930  | M2 lanczos 0.0996 old 0.1069 fe 0.1060 bp 0.1059 acc 0.1067
+noisy  tos_debris      f72  old +5.144  fe +6.009  bp +5.924  acc +5.933  | M2 lanczos 0.0742 old 0.1241 fe 0.1246 bp 0.1255 acc 0.1265
+noisy  tos_debris      f120 old +4.882  fe +5.720  bp +5.629  acc +5.632  | M2 lanczos 0.0584 old 0.0904 fe 0.0908 bp 0.0910 acc 0.0916
+noisy  tos_debris      f168 old +3.874  fe +4.585  bp +4.582  acc +4.662  | M2 lanczos 0.0330 old 0.0259 fe 0.0247 bp 0.0254 acc 0.0254
+
+old : clean +0.0538 | crf23 +0.0335 | noisy +4.0960 | crf23+noisy +1.6585
+fe  : clean +0.2871 | crf23 +0.0113 | noisy +4.8957 | crf23+noisy +1.9651
+bp  : clean +0.4365 | crf23 -0.0344 | noisy +4.8252 | crf23+noisy +1.9094
+acc : clean +0.5854 | crf23 -0.0300 | noisy +4.8581 | crf23+noisy +1.9252
+M2 edge flicker mean over 24 pairs: lanczos 0.0685  old 0.0716  fe 0.0713  bp 0.0713  acc 0.0717
+  clean  M2: lanczos 0.0702  old 0.0695  fe 0.0693  bp 0.0693  acc 0.0697
+  crf23  M2: lanczos 0.0697  old 0.0691  fe 0.0690  bp 0.0686  acc 0.0688
+  noisy  M2: lanczos 0.0643  old 0.0783  fe 0.0778  bp 0.0786  acc 0.0792

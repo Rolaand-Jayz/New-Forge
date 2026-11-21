@@ -1,0 +1,63 @@
+#version 460
+#extension GL_EXT_samplerless_texture_functions : require
+// ============================================================================
+//  ANVIL — shaders/forge_pyr.comp   (FORGE temporal path: luma pyramid)
+//
+//  First-party. Luma pyramid of the CURRENT input frame for the block
+//  matcher (one invocation per input pixel; level l is floor(inSize / 2^l)):
+//     L0 = sqrt(max(dot(rgb_linear, BT.709), 0))        (inSize)
+//     L1 = mean of the 2x2 L0 block                     (inSize / 2)
+//     L2 = mean of the 4x4 L0 block                     (inSize / 4)
+//  Bindings: 0 texture2D uIn (raw input), 9/10/11 r16f L0/L1/L2 (write).
+// ============================================================================
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform texture2D uIn;
+layout(r16f, set = 0, binding = 9) uniform writeonly image2D uL0;
+layout(r16f, set = 0, binding = 10) uniform writeonly image2D uL1;
+layout(r16f, set = 0, binding = 11) uniform writeonly image2D uL2;
+
+layout(push_constant, std430) uniform Params {
+  uvec2 inSize;
+  uvec2 outSize;
+  uint wOff;
+  uint flags;
+  float kappa, amin, tref;
+  uint gSlot;
+  float gScale;
+  float hold;
+} pc;
+
+float lum(ivec2 q) {
+  vec3 c = texelFetch(uIn, clamp(q, ivec2(0), ivec2(pc.inSize) - 1), 0).rgb;
+  return sqrt(max(dot(c, vec3(0.2126, 0.7152, 0.0722)), 0.0));
+}
+
+// fp32 -> nearest fp16 value, ties to even (the torch replicas' .half()); a 16-bit image
+// store of the result is exact whatever rounding the store conversion uses (RADV: toward zero)
+vec4 rte16(vec4 v) {
+  uvec4 u = floatBitsToUint(v);
+  u += 0xFFFu + ((u >> 13u) & 1u);
+  return uintBitsToFloat(u & ~0x1FFFu);
+}
+
+void main() {
+  ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+  if (p.x >= int(pc.inSize.x) || p.y >= int(pc.inSize.y)) return;
+  imageStore(uL0, p, rte16(vec4(lum(p))));
+  // Level sizes are floor(inSize / 2^l); a trailing odd row/column has no
+  // coarser texel of its own.
+  if ((p.x & 1) == 0 && (p.y & 1) == 0 && all(lessThan(p >> 1, ivec2(pc.inSize >> 1)))) {
+    float s = lum(p) + lum(p + ivec2(1, 0)) + lum(p + ivec2(0, 1)) + lum(p + ivec2(1, 1));
+    imageStore(uL1, p >> 1, rte16(vec4(0.25 * s)));
+  }
+  if ((p.x & 3) == 0 && (p.y & 3) == 0 && all(lessThan(p >> 2, ivec2(pc.inSize >> 2)))) {
+    float s = 0.0;
+    for (int j = 0; j < 2; ++j)
+      for (int i = 0; i < 2; ++i) {
+        ivec2 o = p + 2 * ivec2(i, j);
+        s += 0.25 * (lum(o) + lum(o + ivec2(1, 0)) + lum(o + ivec2(0, 1)) + lum(o + ivec2(1, 1)));
+      }
+    imageStore(uL2, p >> 2, rte16(vec4(0.25 * s)));
+  }
+}
