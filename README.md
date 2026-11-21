@@ -16,7 +16,7 @@ The current research supports a bounded premise: multiple frames can contain gen
 
 The current working direction is therefore **evidence-gated temporal reconstruction** rather than unconditional temporal accumulation.
 
-**First implementation evidence (2026-11-17).** FORGE, the reconstruction stage of a private implementation, passes its pre-recorded quality gate on held-out scenes. It measures +0.585 dB on clean input and +0.414 dB on CRF 23 input over lanczos3. Its temporal-stability gate still fails on noisy input, and real 4K60 playback is not yet measured. See [the results record](docs/results/2026-11-17-forge-protected-scene-confirm.md).
+**First implementation evidence (2026-11-17).** FORGE, the reconstruction stage of a private implementation, passes its pre-recorded quality gate on held-out scenes. It measures +0.585 dB on clean input and +0.414 dB on CRF 23 input over lanczos3. Its temporal-stability gate still fails on noisy input, and real 4K60 playback is not yet measured. See [the results record](docs/results/2026-11-17-forge-protected-scene-confirm.md). The FORGE code and the gate scripts that produced these numbers are in [`implementations/forge/`](implementations/forge/README.md).
 
 See [`docs/STATUS.md`](docs/STATUS.md) for the canonical current decision state.
 
@@ -77,6 +77,8 @@ These reports inform experiments and candidate mechanisms. They do **not** const
 ├── CODE_OF_CONDUCT.md
 ├── CONTRIBUTING.md
 ├── .github/            (issue and pull request templates)
+├── implementations/
+│   └── forge/          FORGE code behind the 2026-11-17 results (evidence, not a selected architecture)
 └── docs/
     ├── README.md
     ├── STATUS.md
@@ -98,7 +100,7 @@ These reports inform experiments and candidate mechanisms. They do **not** const
             └── 03-source-faithful-reconstruction-evaluation.md
 ```
 
-The structure will grow only when the work requires it. Implementation directories will be introduced after the first experimental architecture is justified.
+The structure will grow only when the work requires it. `implementations/forge/` publishes the code behind the first results record so it can be checked; it does not select an architecture. Directories for New Forge's own implementation will be introduced after the first experimental architecture is justified.
 
 ## Relationship to earlier work
 

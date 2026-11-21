@@ -22,6 +22,8 @@ Open items:
 
 Full record, evidence chain, and limits: [`results/2026-11-17-forge-protected-scene-confirm.md`](results/2026-11-17-forge-protected-scene-confirm.md).
 
+Since 2026-11-21 the FORGE code and gate scripts are public in [`implementations/forge/`](../implementations/forge/README.md). The ANVIL player itself stays private.
+
 This is evidence, not an architecture decision. The sections below remain the 2026-09-16 research snapshot.
 
 ## Purpose
