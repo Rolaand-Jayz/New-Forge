@@ -1,0 +1,11 @@
+crf23a tos_debris   f72  spatial +0.006  old +0.007  fe +0.303  bp +0.307  acc +0.333  | M2 lanczos 0.1340 spatial 0.1339 old 0.1338 fe 0.1340 bp 0.1339 acc 0.1341
+crf23a tos_debris   f120 spatial +0.003  old +0.005  fe +0.259  bp +0.277  acc +0.310  | M2 lanczos 0.1004 spatial 0.1004 old 0.1004 fe 0.1005 bp 0.1002 acc 0.1003
+crf23a tos_debris   f168 spatial +0.132  old +0.132  fe +0.375  bp +0.584  acc +0.657  | M2 lanczos 0.0230 spatial 0.0227 old 0.0227 fe 0.0224 bp 0.0228 acc 0.0233
+
+spatial: crf23a +0.0470
+old    : crf23a +0.0477
+fe     : crf23a +0.3124
+bp     : crf23a +0.3890
+acc    : crf23a +0.4332
+M2 edge flicker mean over 3 pairs: lanczos 0.0858  spatial 0.0857  old 0.0857  fe 0.0856  bp 0.0856  acc 0.0859
+  crf23a M2: lanczos 0.0858  spatial 0.0857  old 0.0857  fe 0.0856  bp 0.0856  acc 0.0859

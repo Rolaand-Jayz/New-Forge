@@ -1,0 +1,11 @@
+crf23a sintel_cave  f72  spatial +0.045  old +0.050  fe +0.259  bp +0.294  acc +0.337  | M2 lanczos 0.0822 spatial 0.0811 old 0.0811 fe 0.0807 bp 0.0810 acc 0.0811
+crf23a sintel_cave  f120 spatial +0.014  old +0.016  fe +0.197  bp +0.162  acc +0.147  | M2 lanczos 0.0856 spatial 0.0855 old 0.0855 fe 0.0855 bp 0.0850 acc 0.0849
+crf23a sintel_cave  f168 spatial +0.020  old +0.021  fe +0.167  bp +0.197  acc +0.233  | M2 lanczos 0.0483 spatial 0.0478 old 0.0478 fe 0.0475 bp 0.0476 acc 0.0476
+
+spatial: crf23a +0.0265
+old    : crf23a +0.0288
+fe     : crf23a +0.2074
+bp     : crf23a +0.2179
+acc    : crf23a +0.2392
+M2 edge flicker mean over 3 pairs: lanczos 0.0720  spatial 0.0714  old 0.0715  fe 0.0712  bp 0.0712  acc 0.0712
+  crf23a M2: lanczos 0.0720  spatial 0.0714  old 0.0715  fe 0.0712  bp 0.0712  acc 0.0712

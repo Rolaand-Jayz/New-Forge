@@ -1,0 +1,23 @@
+clean  sintel_cave  f72  spatial +0.082  old +0.087  fe +0.407  bp +0.497  acc +0.609  | M2 lanczos 0.0820 spatial 0.0807 old 0.0807 fe 0.0800 bp 0.0806 acc 0.0809
+clean  sintel_cave  f120 spatial +0.012  old +0.016  fe +0.237  bp +0.227  acc +0.226  | M2 lanczos 0.0822 spatial 0.0822 old 0.0823 fe 0.0823 bp 0.0816 acc 0.0815
+clean  sintel_cave  f168 spatial +0.024  old +0.013  fe +0.197  bp +0.310  acc +0.515  | M2 lanczos 0.0478 spatial 0.0469 old 0.0469 fe 0.0463 bp 0.0469 acc 0.0472
+crf23  sintel_cave  f72  spatial +0.065  old +0.065  fe +0.164  bp +0.067  acc +0.040  | M2 lanczos 0.0825 spatial 0.0814 old 0.0815 fe 0.0809 bp 0.0814 acc 0.0817
+crf23  sintel_cave  f120 spatial +0.019  old +0.019  fe +0.109  bp +0.054  acc +0.029  | M2 lanczos 0.0846 spatial 0.0846 old 0.0846 fe 0.0847 bp 0.0840 acc 0.0841
+crf23  sintel_cave  f168 spatial +0.039  old +0.039  fe +0.097  bp +0.037  acc +0.018  | M2 lanczos 0.0476 spatial 0.0470 old 0.0470 fe 0.0467 bp 0.0467 acc 0.0468
+crf27  sintel_cave  f72  spatial +0.037  old +0.040  fe +0.191  bp +0.200  acc +0.215  | M2 lanczos 0.0825 spatial 0.0815 old 0.0815 fe 0.0812 bp 0.0814 acc 0.0815
+crf27  sintel_cave  f120 spatial +0.015  old +0.017  fe +0.151  bp +0.114  acc +0.097  | M2 lanczos 0.0859 spatial 0.0858 old 0.0859 fe 0.0859 bp 0.0850 acc 0.0849
+crf27  sintel_cave  f168 spatial +0.016  old +0.018  fe +0.126  bp +0.130  acc +0.138  | M2 lanczos 0.0470 spatial 0.0465 old 0.0465 fe 0.0463 bp 0.0461 acc 0.0460
+noisy  sintel_cave  f72  spatial +1.738  old +5.353  fe +6.160  bp +6.120  acc +6.155  | M2 lanczos 0.0634 spatial 0.0781 old 0.0810 fe 0.0803 bp 0.0819 acc 0.0827
+noisy  sintel_cave  f120 spatial +1.969  old +4.777  fe +5.492  bp +5.472  acc +5.459  | M2 lanczos 0.0549 spatial 0.0737 old 0.0719 fe 0.0717 bp 0.0722 acc 0.0740
+noisy  sintel_cave  f168 spatial +1.877  old +5.574  fe +6.338  bp +6.307  acc +6.350  | M2 lanczos 0.0444 spatial 0.0485 old 0.0459 fe 0.0451 bp 0.0461 acc 0.0463
+
+spatial: clean +0.0394 | crf23 +0.0406 | crf27 +0.0225 | noisy +1.8611
+old    : clean +0.0388 | crf23 +0.0409 | crf27 +0.0248 | noisy +5.2347
+fe     : clean +0.2804 | crf23 +0.1231 | crf27 +0.1560 | noisy +5.9966
+bp     : clean +0.3444 | crf23 +0.0526 | crf27 +0.1481 | noisy +5.9665
+acc    : clean +0.4499 | crf23 +0.0293 | crf27 +0.1501 | noisy +5.9879
+M2 edge flicker mean over 12 pairs: lanczos 0.0671  spatial 0.0698  old 0.0696  fe 0.0693  bp 0.0695  acc 0.0698
+  clean  M2: lanczos 0.0707  spatial 0.0699  old 0.0700  fe 0.0696  bp 0.0697  acc 0.0699
+  crf23  M2: lanczos 0.0716  spatial 0.0710  old 0.0710  fe 0.0708  bp 0.0707  acc 0.0709
+  crf27  M2: lanczos 0.0718  spatial 0.0713  old 0.0713  fe 0.0712  bp 0.0708  acc 0.0708
+  noisy  M2: lanczos 0.0542  spatial 0.0668  old 0.0663  fe 0.0657  bp 0.0667  acc 0.0677
